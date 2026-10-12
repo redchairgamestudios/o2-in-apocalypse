@@ -46,7 +46,7 @@ export const CompanyIntro: React.FC<CompanyIntroProps> = ({ onComplete }) => {
 
   return (
     <div
-      className="fixed inset-0 z-[9999] bg-black flex items-center justify-center cursor-pointer select-none"
+      className="fixed inset-0 z-[9999] bg-black flex items-center justify-center safe-pad-y cursor-pointer select-none"
       onClick={handleSkip}
     >
       <div
@@ -60,7 +60,7 @@ export const CompanyIntro: React.FC<CompanyIntroProps> = ({ onComplete }) => {
         <img
           src="/assets/ui/company-logo.png"
           alt="Red Chair Games"
-          className="w-40 h-40 sm:w-56 sm:h-56 md:w-64 md:h-64 object-contain drop-shadow-[0_0_40px_rgba(220,38,38,0.3)]"
+          className="w-40 h-40 short:w-28 short:h-28 sm:w-56 sm:h-56 md:w-64 md:h-64 object-contain drop-shadow-[0_0_40px_rgba(220,38,38,0.3)]"
           draggable={false}
         />
 
@@ -68,7 +68,7 @@ export const CompanyIntro: React.FC<CompanyIntroProps> = ({ onComplete }) => {
         <img
           src="/assets/ui/company-text.png"
           alt="Red Chair Games"
-          className="w-64 sm:w-80 md:w-96 object-contain drop-shadow-[0_0_20px_rgba(255,255,255,0.15)]"
+          className="w-64 short:w-48 sm:w-80 md:w-96 object-contain drop-shadow-[0_0_20px_rgba(255,255,255,0.15)]"
           draggable={false}
         />
       </div>

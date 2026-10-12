@@ -71,7 +71,6 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete, missio
         className="absolute inset-0 w-full h-full object-cover opacity-90"
         style={{ filter: 'brightness(0.7) contrast(1.1)' }}
       />
-
       {/* Dark overlay for text readability */}
       <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-black/40 to-black/80" />
 
@@ -85,14 +84,17 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete, missio
         backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 256 256\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'noise\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'4\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23noise)\'/%3E%3C/svg%3E")',
       }} />
 
-      {/* Loading content */}
-      <div className="relative z-20 flex flex-col items-center justify-center text-center px-6">
+      {/* Loading content — safe-area padded and scrollable so nothing is
+          truncated on short viewports / camera cutouts (my-auto keeps it
+          centered while still allowing scroll when it overflows) */}
+      <div className="absolute inset-0 z-20 overflow-y-auto overscroll-contain safe-pad-y flex flex-col">
+        <div className="my-auto flex flex-col items-center justify-center text-center px-6">
         {/* Mission title */}
-        <div className="mb-8">
+        <div className="mb-8 short:mb-3">
           <div className="font-mono text-[10px] text-red-500 uppercase tracking-widest font-bold mb-2 animate-pulse">
             INITIALIZING OPERATION
           </div>
-          <h1 className="font-teko text-4xl md:text-6xl lg:text-7xl font-bold text-white tracking-wider leading-none drop-shadow-[0_0_30px_rgba(255,23,23,0.8)]">
+          <h1 className="font-teko text-4xl md:text-6xl lg:text-7xl short:text-3xl font-bold text-white tracking-wider leading-none drop-shadow-[0_0_30px_rgba(255,23,23,0.8)]">
             MISSION {missionId.toString().padStart(2, '0')}
           </h1>
           <p className="font-military text-sm md:text-base text-zinc-300 mt-2 tracking-wider">
@@ -126,7 +128,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete, missio
         </div>
 
         {/* Tactical tips while loading */}
-        <div className="w-full max-w-md text-left bg-zinc-950/50 border border-zinc-800/50 rounded-lg p-4 backdrop-blur-sm">
+        <div className="w-full max-w-md text-left bg-zinc-950/50 border border-zinc-800/50 rounded-lg p-4 short:p-2.5 backdrop-blur-sm short:hidden sm:short:block">
           <div className="font-teko text-sm text-amber-400 tracking-wider mb-3 flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
             TACTICAL BRIEFING
@@ -154,6 +156,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete, missio
             DEPLOYMENT AUTHORIZED • INSERTION IMMINENT
           </div>
         )}
+        </div>
       </div>
 
       {/* Corner brackets for tactical aesthetic */}
