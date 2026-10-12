@@ -597,7 +597,7 @@ export const ArsenalModal: React.FC<ArsenalModalProps> = ({
         </div>
       ) : activeTab === 'drone' ? (
         /* MQ-7 COMBAT DRONE & UPGRADES SECTION */
-        <div className="flex flex-col gap-6 mt-6 flex-1 overflow-y-auto">
+        <div className="flex flex-col gap-6 mt-6 flex-1 min-h-0">
           {/* Drone Header Overview Banner */}
           <div className="bg-gradient-to-r from-cyan-950/90 via-zinc-950/95 to-zinc-900/90 border border-cyan-500/40 p-6 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-2xl">
             <div className="flex items-start gap-4">
