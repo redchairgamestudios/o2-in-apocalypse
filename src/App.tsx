@@ -445,13 +445,29 @@ export default function App() {
     let lastFpsUpdate = performance.now();
     let animationFrameId: number;
 
-    // Adaptive dynamic resolution (touch devices only): if the measured FPS
-    // sags, render at a lower internal resolution and let the browser upscale;
-    // recover gradually when there is headroom. The HUD FPS counter already
-    // samples once per second, so piggyback on that cadence.
+    // Adaptive dynamic resolution (touch devices only): if FPS stays very low
+    // for several consecutive seconds, render at a lower internal resolution
+    // and let the browser upscale. Deliberately conservative — a momentary
+    // hitch must never leave the game permanently blurred, so the scale resets
+    // to full whenever gameplay stops and recovers aggressively whenever FPS
+    // is merely acceptable (not just excellent).
     let resolutionScale = 1.0;
-    const MIN_RES_SCALE = 0.55;
-    let stableFrames = 0;
+    // HIGH promises crisp visuals: never degrade below 0.8 there, even if FPS
+    // stays low — the user explicitly chose quality over smoothness.
+    const minResScale =
+      saveData.settings.graphicsQuality === 'HIGH' ? 0.8 : 0.65;
+    let badSeconds = 0;
+    let goodSeconds = 0;
+    let playingSeconds = 0;
+
+    const applyResolutionScale = (scale: number) => {
+      resolutionScale = scale;
+      renderer.setPixelRatio(dpr * scale);
+      const cw = containerRef.current?.clientWidth || window.innerWidth;
+      const ch = containerRef.current?.clientHeight || window.innerHeight;
+      renderer.setSize(cw, ch, false);
+      PostProcessing.setSize(cw, ch);
+    };
 
     const animate = (time: number) => {
       animationFrameId = requestAnimationFrame(animate);
@@ -467,28 +483,36 @@ export default function App() {
         frameCount = 0;
         lastFpsUpdate = time;
 
-        if (isTouchDevice && screenRef.current === 'PLAYING') {
-          let next = resolutionScale;
-          if (measuredFps < 26 && resolutionScale > MIN_RES_SCALE) {
-            next = Math.max(MIN_RES_SCALE, resolutionScale - 0.1);
-          } else if (measuredFps > 48 && resolutionScale < 1.0) {
-            // Require 3 consecutive comfortable seconds before scaling back up,
-            // so a momentary lull (loading, cutscene end) doesn't oscillate.
-            stableFrames++;
-            if (stableFrames >= 3) {
-              next = Math.min(1.0, resolutionScale + 0.05);
-              stableFrames = 0;
-            }
+        if (isTouchDevice) {
+          if (screenRef.current !== 'PLAYING') {
+            // Menus/cutscenes: restore full resolution immediately so the
+            // scale can never get stuck low between sessions.
+            badSeconds = 0;
+            goodSeconds = 0;
+            playingSeconds = 0;
+            if (resolutionScale !== 1.0) applyResolutionScale(1.0);
           } else {
-            stableFrames = 0;
-          }
-          if (next !== resolutionScale) {
-            resolutionScale = next;
-            renderer.setPixelRatio(dpr * resolutionScale);
-            const cw = containerRef.current?.clientWidth || window.innerWidth;
-            const ch = containerRef.current?.clientHeight || window.innerHeight;
-            renderer.setSize(cw, ch, false);
-            PostProcessing.setSize(cw, ch);
+            playingSeconds++;
+            // Ignore the first seconds of a session (level load, shader compile)
+            if (playingSeconds > 4) {
+              if (measuredFps < 24) {
+                // Two consecutive very-bad seconds before degrading quality
+                badSeconds++;
+                goodSeconds = 0;
+                if (badSeconds >= 2 && resolutionScale > minResScale) {
+                  applyResolutionScale(Math.max(minResScale, resolutionScale - 0.1));
+                }
+              } else if (measuredFps >= 34) {
+                // 34+ is playable: claw resolution back within 2 seconds
+                goodSeconds++;
+                badSeconds = 0;
+                if (goodSeconds >= 2 && resolutionScale < 1.0) {
+                  applyResolutionScale(Math.min(1.0, resolutionScale + 0.15));
+                }
+              } else {
+                badSeconds = Math.max(0, badSeconds - 1);
+              }
+            }
           }
         }
       }
