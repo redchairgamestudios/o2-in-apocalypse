@@ -13,6 +13,7 @@ import { ZombieManager } from './zombies/ZombieManager';
 import { MissionManager } from './missions/MissionManager';
 import { ParticleSystem } from './effects/ParticleSystem';
 import { WeatherSystem } from './effects/WeatherSystem';
+import { mergeStaticEnvironment } from './models/StaticBatcher';
 import { PostProcessing } from './effects/PostProcessing';
 import { SkyDome } from './effects/SkyDome';
 import { GunEffects } from './effects/GunEffects';
@@ -361,6 +362,10 @@ export default function App() {
 
     // 4. Build Environment
     const envResult = EnvironmentBuilder.buildQuarantineDistrict();
+    mergeStaticEnvironment(envResult.sceneGroup, [
+      ...envResult.interactiveObjects.map((io) => io.mesh),
+      ...envResult.explosiveBarrels.map((b) => b.mesh),
+    ]);
     freezeStaticMatrices(envResult.sceneGroup);
     scene.add(envResult.sceneGroup);
     envResultRef.current = envResult;
@@ -1264,6 +1269,10 @@ export default function App() {
 
     // Build designated unique map for this mission
     const newEnv = EnvironmentBuilder.buildForMission(missionId);
+    mergeStaticEnvironment(newEnv.sceneGroup, [
+      ...newEnv.interactiveObjects.map((io) => io.mesh),
+      ...newEnv.explosiveBarrels.map((b) => b.mesh),
+    ]);
     freezeStaticMatrices(newEnv.sceneGroup);
     scene.add(newEnv.sceneGroup);
     envResultRef.current = newEnv;
