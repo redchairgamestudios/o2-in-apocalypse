@@ -141,7 +141,13 @@ export class PostProcessing {
     this.gradePass = new ShaderPass(CinematicGradeShader);
     this.composer.addPass(this.gradePass);
 
-    this.enabled = quality !== 'LOW';
+    // Composer only on HIGH. MEDIUM/LOW render direct to canvas: on a
+    // mid-range mobile GPU the three fullscreen passes (HDR target + tonemap
+    // blit + grade pass with 3-tap chromatic aberration) cost more fragment
+    // fill than the scene itself. Damage/low-health feedback on those tiers
+    // fill than the scene itself. Damage/low-health feedback on those tiers
+    // comes from the HUD's red overlay instead of the shader grade.
+    this.enabled = quality === 'HIGH';
   }
 
   public static setQuality(quality: 'LOW' | 'MEDIUM' | 'HIGH') {
@@ -150,7 +156,11 @@ export class PostProcessing {
   }
 
   public static setSize(w: number, h: number) {
-    this.composer?.setSize(w, h);
+    if (!this.composer || !this.renderer) return;
+    // Re-sync with any adaptive pixel-ratio changes made on the renderer
+    // (dynamic resolution scaling) before resizing the render targets.
+    this.composer.setPixelRatio(this.renderer.getPixelRatio());
+    this.composer.setSize(w, h);
   }
 
   /** Swap the rendered camera (e.g. Air Strike bird's-eye targeting view). */

@@ -94,6 +94,17 @@ export class ParticleSystem {
   public static init(scene: THREE.Scene) {
     this.scene = scene;
 
+    // Mobile: every active particle/decal is its own draw call with per-frame
+    // CPU simulation — pool sizes are cut roughly in half on touch devices.
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const PARTICLE_POOL = isTouch ? 140 : 300;
+    const GIB_START = isTouch ? 100 : 210;
+    const GIB_END = isTouch ? 120 : 260;
+    const DECAL_POOL = isTouch ? 60 : 140;
+    const WALL_DECAL_START = isTouch ? 40 : 90;
+    const WALL_DECAL_END = isTouch ? 52 : 120;
+
     this.bloodMat = new THREE.MeshBasicMaterial({ color: 0x990000 });
     this.darkBloodMat = new THREE.MeshStandardMaterial({
       color: 0x4a0000,
@@ -151,21 +162,21 @@ export class ParticleSystem {
       depthWrite: false,
     });
 
-    // Pre-allocate 300 pooled particle meshes
+    // Pre-allocate pooled particle meshes (300 desktop / 140 mobile)
     const sphereGeo = new THREE.SphereGeometry(0.065, 4, 4);
     const boxGibGeo = new THREE.BoxGeometry(0.14, 0.09, 0.12);
     const boneGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.2, 5);
 
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < PARTICLE_POOL; i++) {
       let geo: THREE.BufferGeometry = sphereGeo;
       let mat: THREE.Material = this.bloodMat;
       let isGib = false;
 
-      if (i >= 210 && i < 260) {
+      if (i >= GIB_START && i < GIB_END) {
         geo = boxGibGeo;
         mat = this.fleshMat;
         isGib = true;
-      } else if (i >= 260) {
+      } else if (i >= GIB_END) {
         geo = boneGeo;
         mat = this.boneMat;
         isGib = true;
@@ -188,13 +199,13 @@ export class ParticleSystem {
       });
     }
 
-    // Pre-allocate 140 decals: 90 ground pools/splatters + 30 wall decals + 20 scorch marks
+    // Pre-allocate decals (140 desktop / 60 mobile): ground pools/splatters + wall decals + scorch marks
     const decalGeo = new THREE.PlaneGeometry(1, 1);
     decalGeo.rotateX(-Math.PI / 2);
 
-    for (let i = 0; i < 140; i++) {
-      const isWall = i >= 90 && i < 120;
-      const isScorch = i >= 120;
+    for (let i = 0; i < DECAL_POOL; i++) {
+      const isWall = i >= WALL_DECAL_START && i < WALL_DECAL_END;
+      const isScorch = i >= WALL_DECAL_END;
       const geo = isWall ? new THREE.PlaneGeometry(1, 1) : decalGeo;
       const mat = isScorch
         ? this.scorchMat!.clone()

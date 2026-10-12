@@ -260,19 +260,24 @@ export default function App() {
     sceneRef.current = scene;
 
     // 2. WebGL Renderer
+    const isTouchDevice =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
     const renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      // MSAA on the default framebuffer only helps the direct-render path
+      // (desktop MEDIUM/LOW); the composer path can't use it. On mobile it
+      // is pure memory/bandwidth cost, so disable it there.
+      antialias: !isTouchDevice,
       powerPreference: 'high-performance',
     });
     const initW = containerRef.current.clientWidth || window.innerWidth || 800;
     const initH = containerRef.current.clientHeight || window.innerHeight || 600;
     renderer.setSize(initW, initH);
-    const dpr = ('ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024)
+    const dpr = isTouchDevice
       ? 1.0 // touch devices: native 1x — high-DPI panels melt the fragment budget
       : Math.min(window.devicePixelRatio, saveData.settings.graphicsQuality === 'HIGH' ? 1.25 : 1.0);
     renderer.setPixelRatio(dpr);
     renderer.shadowMap.enabled = saveData.settings.graphicsQuality !== 'LOW';
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.12;
     rendererRef.current = renderer;
@@ -440,6 +445,14 @@ export default function App() {
     let lastFpsUpdate = performance.now();
     let animationFrameId: number;
 
+    // Adaptive dynamic resolution (touch devices only): if the measured FPS
+    // sags, render at a lower internal resolution and let the browser upscale;
+    // recover gradually when there is headroom. The HUD FPS counter already
+    // samples once per second, so piggyback on that cadence.
+    let resolutionScale = 1.0;
+    const MIN_RES_SCALE = 0.55;
+    let stableFrames = 0;
+
     const animate = (time: number) => {
       animationFrameId = requestAnimationFrame(animate);
 
@@ -449,9 +462,35 @@ export default function App() {
       // FPS Calculation
       frameCount++;
       if (time - lastFpsUpdate >= 1000) {
-        setFps(frameCount);
+        const measuredFps = frameCount;
+        setFps(measuredFps);
         frameCount = 0;
         lastFpsUpdate = time;
+
+        if (isTouchDevice && screenRef.current === 'PLAYING') {
+          let next = resolutionScale;
+          if (measuredFps < 26 && resolutionScale > MIN_RES_SCALE) {
+            next = Math.max(MIN_RES_SCALE, resolutionScale - 0.1);
+          } else if (measuredFps > 48 && resolutionScale < 1.0) {
+            // Require 3 consecutive comfortable seconds before scaling back up,
+            // so a momentary lull (loading, cutscene end) doesn't oscillate.
+            stableFrames++;
+            if (stableFrames >= 3) {
+              next = Math.min(1.0, resolutionScale + 0.05);
+              stableFrames = 0;
+            }
+          } else {
+            stableFrames = 0;
+          }
+          if (next !== resolutionScale) {
+            resolutionScale = next;
+            renderer.setPixelRatio(dpr * resolutionScale);
+            const cw = containerRef.current?.clientWidth || window.innerWidth;
+            const ch = containerRef.current?.clientHeight || window.innerHeight;
+            renderer.setSize(cw, ch, false);
+            PostProcessing.setSize(cw, ch);
+          }
+        }
       }
 
       // Update Particles, Dynamic Weather, Sky & Gun VFX Simulation

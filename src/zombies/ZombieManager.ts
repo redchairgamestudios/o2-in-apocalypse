@@ -29,7 +29,11 @@ export class ZombieManager {
   public bossInstance: ZombieInstance | null = null;
   // Dead bodies stay on the ground bleeding out (capped, oldest sinks away)
   private corpses: CorpseRecord[] = [];
-  private readonly MAX_CORPSES = 22;
+  // Mobile perf: every zombie is a full skinned GLTF rig with its own mixer —
+  // hard-cap the concurrent alive count there so hordes can't stack 20+ rigs
+  // (the single biggest GPU/CPU cost on mid-range phones).
+  private readonly MAX_ALIVE: number;
+  private readonly MAX_CORPSES: number;
 
   public pickups: PickupItem[] = [];
 
@@ -57,6 +61,10 @@ export class ZombieManager {
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    this.MAX_ALIVE = isTouch ? 10 : 24;
+    this.MAX_CORPSES = isTouch ? 8 : 22;
   }
 
   public setSpawnPoints(points: THREE.Vector3[]) {
@@ -109,7 +117,7 @@ export class ZombieManager {
     forceNarrowPath?: boolean,
     bossOverride?: { isBoss: boolean; name: string; maxHp: number; scale?: number },
     huntPlayer: boolean = false
-  ): ZombieInstance {
+  ): ZombieInstance | null {
     const baseConfig = ZOMBIE_DEFINITIONS[type] || ZOMBIE_DEFINITIONS['walker'];
     const config = { ...baseConfig };
     if (bossOverride) {
@@ -117,6 +125,14 @@ export class ZombieManager {
       config.name = bossOverride.name;
       config.maxHp = bossOverride.maxHp;
       if (bossOverride.scale) config.scale = bossOverride.scale;
+    }
+
+    // Hard cap on concurrent alive rigs. Bosses always get through so mission
+    // objectives can't stall; regular spawns are simply dropped (the wave
+    // top-up logic will retry on its next tick).
+    const aliveCount = this.zombies.filter((z) => !z.isDead).length;
+    if (!config.isBoss && aliveCount >= this.MAX_ALIVE) {
+      return null;
     }
     const id = `z_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 

@@ -36,6 +36,8 @@ export class GltfZombieFactory {
   public static ready = false;
   private static loading = false;
   private static loadPromise: Promise<void> | null = null;
+  // Shared per-variant zombie materials (key: source material uuid + tint hex)
+  private static tintMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
 
   public static preload(): Promise<void> {
     if (this.ready) return Promise.resolve();
@@ -134,8 +136,13 @@ export class GltfZombieFactory {
     root.name = `gltf_zombie_${zombieId}`;
     root.scale.setScalar(this.baseScale * (config.scale || 1.0));
 
-    // Per-variant tint over the shared melty-flesh texture
-    const tint = new THREE.Color(config.skinColor || 0xffffff).lerp(new THREE.Color(0xffffff), 0.45);
+    // Per-variant tint over the shared melty-flesh texture. Cloned materials
+    // are cached per (source material + tint) so every zombie of the same
+    // variant shares material instances — cloning per zombie multiplies
+    // shader-program state switches and defeats draw batching on mobile GPUs.
+    const tintHex = new THREE.Color(config.skinColor || 0xffffff)
+      .lerp(new THREE.Color(0xffffff), 0.45)
+      .getHex();
     root.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh) return;
@@ -146,10 +153,15 @@ export class GltfZombieFactory {
       mesh.frustumCulled = false; // skinned verts move beyond the bind-pose bounds
       const src = mesh.material as THREE.MeshStandardMaterial;
       if (src) {
-        const mat = src.clone();
-        mat.color.copy(tint);
-        mat.roughness = 0.62;
-        mat.metalness = 0.02;
+        const key = `${src.uuid}_${tintHex}`;
+        let mat = this.tintMaterialCache.get(key);
+        if (!mat) {
+          mat = src.clone();
+          mat.color.setHex(tintHex);
+          mat.roughness = 0.62;
+          mat.metalness = 0.02;
+          this.tintMaterialCache.set(key, mat);
+        }
         mesh.material = mat;
       }
     });
