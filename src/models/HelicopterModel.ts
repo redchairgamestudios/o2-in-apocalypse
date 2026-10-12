@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { HelicopterAsset } from './HelicopterAsset';
 import { ProceduralTextures } from '../textures/ProceduralTextures';
 
 export interface HelicopterInstance {
@@ -40,6 +41,15 @@ export class HelicopterModel {
     // ==========================================
     // 1. MAIN CABIN & COCKPIT FUSELAGE
     // ==========================================
+    // High-detail authored model ("helicopter.glb") replaces the procedural
+    // hull when it has finished streaming — rotor groups & lights stay.
+    const glbBody = HelicopterAsset.getTemplate();
+    if (glbBody) {
+      [...group.children].forEach((child) => {
+        if ((child as THREE.Mesh).isMesh) group.remove(child);
+      });
+    }
+
     const cabinGeo = new THREE.BoxGeometry(2.4, 2.1, 5.8);
     const cabin = new THREE.Mesh(cabinGeo, fuselageMat);
     cabin.position.set(0, 1.6, 0);
@@ -253,6 +263,30 @@ export class HelicopterModel {
     searchLight.target = searchLightTarget;
     searchLight.castShadow = true;
     group.add(searchLight);
+
+    // Authored body: add it, then re-seat the authored rotor meshes under the
+    // mainRotor / tailRotor groups so the existing spin animation still drives them
+    if (glbBody) {
+      group.add(glbBody);
+      glbBody.updateMatrixWorld(true);
+
+      const authored: THREE.Mesh[] = [];
+      glbBody.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh && /rotor|blade|prop/i.test(o.name)) {
+          authored.push(o as THREE.Mesh);
+        }
+      });
+
+      const reseat = (mesh: THREE.Mesh, targetGroup: THREE.Group) => {
+        mesh.updateWorldMatrix(true, false);
+        const hubWorld = new THREE.Vector3().setFromMatrixPosition(mesh.matrixWorld);
+        targetGroup.position.copy(hubWorld);
+        targetGroup.attach(mesh);
+      };
+
+      if (authored.length > 0) reseat(authored[0], mainRotor);
+      if (authored.length > 1) reseat(authored[1], tailRotor);
+    }
 
     return {
       group,

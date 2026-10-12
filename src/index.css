@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Short-viewport variant: phones in landscape (320-430px tall) and small
+   tablets / split windows. Use as `short:` to compact any layout. */
+@custom-variant short (@media (max-height: 640px));
+
 @layer base {
   html, body, #root {
     width: 100%;
@@ -24,6 +28,14 @@
 .font-military {
   font-family: 'Chakra Petch', monospace;
   letter-spacing: 0.05em;
+}
+
+.font-rajdhani {
+  font-family: 'Rajdhani', 'Chakra Petch', sans-serif;
+}
+
+.font-oswald {
+  font-family: 'Oswald', 'Teko', sans-serif;
 }
 
 /* Vignette & Blood overlays */

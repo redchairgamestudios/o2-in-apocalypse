@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ProceduralTextures } from '../../textures/ProceduralTextures';
-import { EnvironmentResult, InteractiveObject } from '../EnvironmentBuilder';
+import { EnvironmentResult, createHurdleField, InteractiveObject } from '../EnvironmentBuilder';
 import { HelicopterModel } from '../HelicopterModel';
 
 export class AirfieldHangarMap {
@@ -44,7 +44,7 @@ export class AirfieldHangarMap {
     const hazardMat = new THREE.MeshBasicMaterial({ map: hazardTex });
 
     // 1. Tarmac Runway & Airfield Apron (expanded 190m x 250m)
-    const tarmacGeo = new THREE.PlaneGeometry(190, 250);
+    const tarmacGeo = new THREE.PlaneGeometry(240, 320);
     tarmacGeo.rotateX(-Math.PI / 2);
     const tarmacMesh = new THREE.Mesh(tarmacGeo, tarmacMat);
     tarmacMesh.receiveShadow = true;
@@ -52,10 +52,10 @@ export class AirfieldHangarMap {
 
     // Perimeter Security Blast Barriers & Hangar Walls
     const perimeterWalls = [
-      { x: -85, z: 0, w: 2, h: 12, d: 240 },
-      { x: 85, z: 0, w: 2, h: 12, d: 240 },
-      { x: 0, z: -115, w: 172, h: 12, d: 2 },
-      { x: 0, z: 115, w: 172, h: 12, d: 2 },
+      { x: -110, z: 0, w: 2, h: 12, d: 300 },
+      { x: 110, z: 0, w: 2, h: 12, d: 300 },
+      { x: 0, z: -148, w: 224, h: 12, d: 2 },
+      { x: 0, z: 148, w: 224, h: 12, d: 2 },
     ];
 
     perimeterWalls.forEach((w) => {
@@ -307,11 +307,22 @@ export class AirfieldHangarMap {
       colliderBoxes.push(bbox);
     });
 
+
+    // ==========================================
+    // HURDLE FIELDS — scattered cover across the expanded arena
+    // ==========================================
+    const keepOut = [{"x":16,"z":-18,"r":8},{"x":0,"z":36,"r":8},{"x":0,"z":0,"r":8},{"x":0,"z":44,"r":10},{"x":0,"z":-42,"r":9}];
+    createHurdleField(root, colliderBoxes, { minX: -92, maxX: -26, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 901 });
+    createHurdleField(root, colliderBoxes, { minX: 26, maxX: 92, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 902 });
+    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: -138, maxZ: -92, keepOut, count: 10, seed: 903 });
+    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: 62, maxZ: 136, keepOut, count: 10, seed: 904 });
+
     return {
       sceneGroup: root,
       colliderBoxes,
       interactiveObjects,
       explosiveBarrels,
+      bounds: { minX: -105, maxX: 105, minZ: -143, maxZ: 143 },
       safehouseZone: {
         position: new THREE.Vector3(0, 0, 44),
         radius: 6.5,
@@ -335,7 +346,7 @@ export class AirfieldHangarMap {
       fogColor: 0x1e293b,
       fogDensity: 0.009,
       ambientColor: 0x94a3b8,
-      ambientIntensity: 1.1,
+      ambientIntensity: 0.88,
       directionalColor: 0xfef08a,
       directionalIntensity: 2.2,
       directionalPos: [40, 65, 30],

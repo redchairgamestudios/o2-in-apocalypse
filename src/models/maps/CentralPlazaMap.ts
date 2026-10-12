@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ProceduralTextures } from '../../textures/ProceduralTextures';
-import { EnvironmentResult, InteractiveObject } from '../EnvironmentBuilder';
+import { EnvironmentResult, createHurdleField, InteractiveObject } from '../EnvironmentBuilder';
 import { HelicopterModel } from '../HelicopterModel';
 
 export class CentralPlazaMap {
@@ -51,7 +51,7 @@ export class CentralPlazaMap {
     });
 
     // 1. Grand Plaza Cobblestone Ground (expanded 180m x 240m)
-    const groundGeo = new THREE.PlaneGeometry(180, 240);
+    const groundGeo = new THREE.PlaneGeometry(240, 320);
     groundGeo.rotateX(-Math.PI / 2);
     const groundMesh = new THREE.Mesh(groundGeo, groundMat);
     groundMesh.receiveShadow = true;
@@ -59,10 +59,10 @@ export class CentralPlazaMap {
 
     // Perimeter Monumental Walls & Neoclassical Colonnade
     const wallConfigs = [
-      { x: -68, z: 0, w: 2, h: 14, d: 210 }, // West wall
-      { x: 68, z: 0, w: 2, h: 14, d: 210 },  // East wall
-      { x: 0, z: -102, w: 138, h: 14, d: 2 },  // North wall
-      { x: 0, z: 102, w: 138, h: 14, d: 2 },   // South wall
+      { x: -110, z: 0, w: 2, h: 14, d: 300 }, // West wall
+      { x: 110, z: 0, w: 2, h: 14, d: 300 },  // East wall
+      { x: 0, z: -148, w: 224, h: 14, d: 2 },  // North wall
+      { x: 0, z: 148, w: 224, h: 14, d: 2 },   // South wall
     ];
 
     for (const wc of wallConfigs) {
@@ -279,11 +279,22 @@ export class CentralPlazaMap {
       colliderBoxes.push(bbox);
     }
 
+
+    // ==========================================
+    // HURDLE FIELDS — scattered cover across the expanded arena
+    // ==========================================
+    const keepOut = [{"x":0,"z":0,"r":12},{"x":-14,"z":10,"r":10},{"x":0,"z":44,"r":10},{"x":14,"z":-12,"r":9},{"x":0,"z":-32,"r":9}];
+    createHurdleField(root, colliderBoxes, { minX: -92, maxX: -26, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 801 });
+    createHurdleField(root, colliderBoxes, { minX: 26, maxX: 92, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 802 });
+    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: -138, maxZ: -92, keepOut, count: 10, seed: 803 });
+    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: 62, maxZ: 136, keepOut, count: 10, seed: 804 });
+
     return {
       sceneGroup: root,
       colliderBoxes,
       interactiveObjects,
       explosiveBarrels,
+      bounds: { minX: -105, maxX: 105, minZ: -143, maxZ: 143 },
       safehouseZone: {
         position: new THREE.Vector3(0, 0, 44),
         radius: 5.5,
@@ -326,7 +337,7 @@ export class CentralPlazaMap {
       fogColor: 0x270707, // Apocalyptic blood-red ember fog
       fogDensity: 0.022,
       ambientColor: 0x5c1d1d,
-      ambientIntensity: 0.9,
+      ambientIntensity: 0.72,
       directionalColor: 0xfca5a5,
       directionalIntensity: 1.9,
       directionalPos: [15, 60, 20],

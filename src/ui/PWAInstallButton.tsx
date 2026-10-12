@@ -17,7 +17,7 @@ export const PWAInstallButton: React.FC<{ className?: string }> = ({ className =
       <button
         onClick={install}
         className={`flex items-center gap-1.5 bg-gradient-to-r from-red-700 to-rose-800 hover:from-red-600 hover:to-rose-700 active:from-red-800 active:to-rose-900 text-white px-3 py-1.5 rounded-lg font-teko text-base sm:text-lg font-bold tracking-wider uppercase cursor-pointer shadow-lg shadow-red-950/60 transition-all border border-red-500/60 touch-manipulation ${className}`}
-        title="Install Dead Zone Trigger to your home screen or desktop"
+        title="Install O² in Apocalypse to your home screen or desktop"
       >
         <Download className="w-4 h-4 text-red-200" />
         <span>INSTALL APP</span>
@@ -52,13 +52,13 @@ export const PWAInstallButton: React.FC<{ className?: string }> = ({ className =
               <div className="flex items-center gap-3 mb-4">
                 <img
                   src="/app-logo.png"
-                  alt="Dead Zone Logo"
+                  alt="O² in Apocalypse Logo"
                   className="w-12 h-12 rounded-xl border border-red-500/40 object-contain bg-black shadow-md"
                   referrerPolicy="no-referrer"
                 />
                 <div>
                   <h3 className="text-xl font-bold font-teko tracking-wide text-white leading-tight">
-                    INSTALL DEAD ZONE: TRIGGER
+                    INSTALL O² IN APOCALYPSE
                   </h3>
                   <p className="text-xs text-zinc-400 font-mono">Progressive Web App</p>
                 </div>

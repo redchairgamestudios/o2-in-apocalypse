@@ -245,21 +245,21 @@ export const SpecimenViewerModal: React.FC<SpecimenViewerModalProps> = ({ onClos
   return (
     <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col p-3 sm:p-6 pointer-events-auto overflow-hidden">
       {/* Top Header */}
-      <div className="flex justify-between items-center pb-3 border-b border-zinc-800">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-red-950/80 border border-red-500/60 rounded">
+      <div className="flex justify-between items-center pb-3 border-b border-zinc-800 gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="p-2 bg-red-950/80 border border-red-500/60 rounded shrink-0">
             <Skull className="w-5 h-5 text-red-500 animate-pulse" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="font-teko text-2xl sm:text-3xl font-bold tracking-wide text-white leading-none">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="font-teko text-xl sm:text-2xl md:text-3xl font-bold tracking-wide text-white leading-none">
                 BIO-SPECIMEN ANALYSIS: MELTY ZOMBIE
               </h2>
-              <span className="font-mono text-[10px] bg-red-900/60 text-red-300 border border-red-500/40 px-1.5 py-0.5 rounded uppercase">
+              <span className="font-mono text-[10px] bg-red-900/60 text-red-300 border border-red-500/40 px-1.5 py-0.5 rounded uppercase shrink-0">
                 CLASS-4 MUTANT
               </span>
             </div>
-            <p className="font-military text-[11px] text-zinc-400">
+            <p className="font-military text-[11px] text-zinc-400 truncate short:hidden">
               Texture Pattern ID: Material__meltyzombie_diffuse_tga_baseColor.png
             </p>
           </div>
@@ -267,16 +267,17 @@ export const SpecimenViewerModal: React.FC<SpecimenViewerModalProps> = ({ onClos
 
         <button
           onClick={onClose}
-          className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700 active:scale-95 transition-all"
+          className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700 active:scale-95 transition-all shrink-0"
         >
           <X className="w-5 h-5" />
         </button>
       </div>
 
-      {/* Main Container */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 mt-3 overflow-hidden min-h-0">
+      {/* Main Container — side-by-side from 640px so landscape phones/tablets
+          never squeeze the intel panel out of view */}
+      <div className="flex-1 grid grid-cols-1 min-[640px]:grid-cols-12 gap-3 sm:gap-4 mt-3 overflow-hidden min-h-0">
         {/* Left Column: 3D Interactive Holo-Stage */}
-        <div className="lg:col-span-8 relative bg-zinc-950/90 border border-zinc-800 rounded-lg overflow-hidden flex flex-col min-h-[320px]">
+        <div className="min-[640px]:col-span-8 relative bg-zinc-950/90 border border-zinc-800 rounded-lg overflow-hidden flex flex-col min-h-[220px] min-[640px]:min-h-0">
           {/* 3D Viewport Mount */}
           <div ref={mountRef} className="w-full flex-1 cursor-grab active:cursor-grabbing" />
 
@@ -333,7 +334,7 @@ export const SpecimenViewerModal: React.FC<SpecimenViewerModalProps> = ({ onClos
         </div>
 
         {/* Right Column: Specimen Intel & Texture Mapping Breakdown */}
-        <div className="lg:col-span-4 flex flex-col bg-zinc-950/90 border border-zinc-800 rounded-lg p-4 overflow-y-auto space-y-4">
+        <div className="min-[640px]:col-span-4 flex flex-col bg-zinc-950/90 border border-zinc-800 rounded-lg p-4 overflow-y-auto space-y-4">
           {/* Navigation Tabs */}
           <div className="flex border-b border-zinc-800 pb-2 gap-2">
             {(['ANATOMY', 'TEXTURE', 'DATA'] as const).map((tab) => (

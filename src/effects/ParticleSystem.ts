@@ -21,7 +21,7 @@ interface BloodDecal {
   maxLife: number;
   initialScale: number;
   maxScale: number;
-  type: 'POOL' | 'SPLATTER' | 'WALL';
+  type: 'POOL' | 'SPLATTER' | 'WALL' | 'SCORCH';
 }
 
 export interface ScreenBloodDrop {
@@ -43,6 +43,33 @@ export class ParticleSystem {
   private static decals: BloodDecal[] = [];
   private static decalIndex: number = 0;
   private static pickupMeshes: Map<string, THREE.Group> = new Map();
+  // Current mission environment — wall-blood raycasts anchor against these so
+  // splatter decals only ever cling to real surfaces, never float in air
+  private static envMeshes: THREE.Object3D[] = [];
+  private static wallRaycaster: THREE.Raycaster = new THREE.Raycaster();
+
+  /** Give the particle system the active mission environment for surface queries. */
+  public static setEnvMeshes(group: THREE.Object3D | null) {
+    this.envMeshes = group ? [group] : [];
+  }
+
+  /**
+   * First hit that lands on a SOLID, opaque, visible surface. Transparent
+   * props (the objective light beam, chain-link fences, the extraction ring)
+   * and hidden helpers must never carry a decal — blood anchored to a
+   * see-through mesh reads as blood floating in mid-air.
+   */
+  private static firstSolidHit(hits: THREE.Intersection[]): THREE.Intersection | null {
+    for (const h of hits) {
+      const mesh = h.object as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.visible) continue;
+      const mat = mesh.material as (THREE.Material & { opacity?: number }) | undefined;
+      if (!mat) continue;
+      if (mat.transparent || (mat.opacity ?? 1) < 0.95) continue;
+      return h;
+    }
+    return null;
+  }
 
   private static bloodMat: THREE.MeshBasicMaterial | null = null;
   private static darkBloodMat: THREE.MeshStandardMaterial | null = null;
@@ -55,9 +82,10 @@ export class ParticleSystem {
   private static brassMat: THREE.MeshStandardMaterial | null = null;
 
   // Reusable decal materials
-  private static poolMat: THREE.MeshBasicMaterial | null = null;
+  private static poolMat: THREE.MeshStandardMaterial | null = null;
   private static splatterMat: THREE.MeshBasicMaterial | null = null;
   private static wallDripMat: THREE.MeshBasicMaterial | null = null;
+  private static scorchMat: THREE.MeshBasicMaterial | null = null;
 
   // Screen blood droplets state
   public static screenBloodIntensity: number = 0;
@@ -89,11 +117,16 @@ export class ParticleSystem {
     this.brassMat = new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.9, roughness: 0.3 });
 
     // Decal materials
-    this.poolMat = new THREE.MeshBasicMaterial({
+    // Wet-blood pool: standard material with low roughness picks up the sky
+    // environment + moonlight so fresh pools glint like the reference still
+    this.poolMat = new THREE.MeshStandardMaterial({
       map: ProceduralTextures.getBloodPool(),
       transparent: true,
       opacity: 0.9,
       depthWrite: false,
+      roughness: 0.22,
+      metalness: 0.45,
+      envMapIntensity: 0.75,
     });
 
     this.splatterMat = new THREE.MeshBasicMaterial({
@@ -109,6 +142,13 @@ export class ParticleSystem {
       opacity: 0.95,
       depthWrite: false,
       side: THREE.DoubleSide,
+    });
+
+    this.scorchMat = new THREE.MeshBasicMaterial({
+      map: ProceduralTextures.getScorchMark(),
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
     });
 
     // Pre-allocate 300 pooled particle meshes
@@ -148,14 +188,19 @@ export class ParticleSystem {
       });
     }
 
-    // Pre-allocate 100 blood decals (70 ground splatters/pools + 30 wall decals)
+    // Pre-allocate 140 decals: 90 ground pools/splatters + 30 wall decals + 20 scorch marks
     const decalGeo = new THREE.PlaneGeometry(1, 1);
     decalGeo.rotateX(-Math.PI / 2);
 
-    for (let i = 0; i < 100; i++) {
-      const isWall = i >= 70;
+    for (let i = 0; i < 140; i++) {
+      const isWall = i >= 90 && i < 120;
+      const isScorch = i >= 120;
       const geo = isWall ? new THREE.PlaneGeometry(1, 1) : decalGeo;
-      const mat = isWall ? this.wallDripMat.clone() : (i % 2 === 0 ? this.poolMat.clone() : this.splatterMat.clone());
+      const mat = isScorch
+        ? this.scorchMat!.clone()
+        : isWall
+          ? this.wallDripMat.clone()
+          : i % 2 === 0 ? this.poolMat!.clone() : this.splatterMat!.clone();
       const mesh = new THREE.Mesh(geo, mat);
       mesh.visible = false;
       this.scene.add(mesh);
@@ -165,7 +210,7 @@ export class ParticleSystem {
         maxLife: 35, // Decals stay for up to 35 seconds of persistent carnage!
         initialScale: 0.3,
         maxScale: 2.2,
-        type: isWall ? 'WALL' : (i % 2 === 0 ? 'POOL' : 'SPLATTER'),
+        type: isScorch ? 'SCORCH' : isWall ? 'WALL' : (i % 2 === 0 ? 'POOL' : 'SPLATTER'),
       });
     }
   }
@@ -241,13 +286,17 @@ export class ParticleSystem {
       this.spawnBloodDecal(forwardSplatPos, isHeadshot ? 2.2 : 1.4);
     }
 
-    // Wall blood check: if near vertical buildings/barriers or along bullet flight
-    if (Math.abs(pos.x) > 7.5 || Math.random() < 0.35) {
-      const wallNormal = new THREE.Vector3(pos.x > 0 ? -1 : 1, 0, 0);
-      const wallPos = new THREE.Vector3(pos.x > 0 ? pos.x + 1.2 : pos.x - 1.2, Math.max(0.8, pos.y), pos.z);
-      this.spawnWallBlood(wallPos, wallNormal, isHeadshot ? 2.4 : 1.6);
+  // Wall blood check: spray toward a REAL surface — the search direction is
+  // raycast and the decal is dropped when no wall is actually there (the old
+  // fixed ±1.2m guess stamped floating blood circles in open air)
+  if (Math.abs(pos.x) > 7.5 || Math.random() < 0.35) {
+    const searchDir = new THREE.Vector3(dir.x, 0, dir.z);
+    if (searchDir.lengthSq() < 0.01) {
+      searchDir.set(pos.x > 0 ? -1 : 1, 0, 0);
     }
+    this.spawnWallBlood(pos, searchDir.normalize(), isHeadshot ? 2.4 : 1.6);
   }
+}
 
   // Pulsing Arterial Blood Fountain (Headshot decapitation geyser)
   public static spawnArterialSpurt(neckPos: THREE.Vector3, dir: THREE.Vector3) {
@@ -330,20 +379,20 @@ export class ParticleSystem {
   }
 
   // Expanding Ground Blood Pool Decal
-  public static spawnBloodDecal(groundPos: THREE.Vector3, size: number = 2.0) {
-    // Find free ground decal (indices 0..69)
+  public static spawnBloodDecal(groundPos: THREE.Vector3, size: number = 2.0, life: number = 32 + Math.random() * 10) {
+    // Find free ground decal (indices 0..89)
     let decal: BloodDecal | null = null;
-    for (let i = 0; i < 70; i++) {
-      const idx = (this.decalIndex + i) % 70;
+    for (let i = 0; i < 90; i++) {
+      const idx = (this.decalIndex + i) % 90;
       if (!this.decals[idx].mesh.visible) {
         decal = this.decals[idx];
-        this.decalIndex = (idx + 1) % 70;
+        this.decalIndex = (idx + 1) % 90;
         break;
       }
     }
     if (!decal) {
       // Reuse oldest
-      this.decalIndex = (this.decalIndex + 1) % 70;
+      this.decalIndex = (this.decalIndex + 1) % 90;
       decal = this.decals[this.decalIndex];
     }
     if (!decal) return;
@@ -355,30 +404,81 @@ export class ParticleSystem {
     decal.mesh.scale.setScalar(0.35);
     decal.mesh.visible = true;
     decal.life = 0;
-    decal.maxLife = 32 + Math.random() * 10;
+    decal.maxLife = life;
     decal.initialScale = 0.35;
     decal.maxScale = size;
     (decal.mesh.material as THREE.MeshBasicMaterial).opacity = 0.94;
   }
 
-  // Wall Blood Splatter Decal
-  public static spawnWallBlood(pos: THREE.Vector3, normal: THREE.Vector3, size: number = 1.6) {
-    // Find free wall decal (indices 70..99)
+  // Charred blast-residue ground mark (explosions — never blood-colored)
+  public static spawnScorchDecal(groundPos: THREE.Vector3, size: number = 3.0) {
     let decal: BloodDecal | null = null;
-    for (let i = 70; i < 100; i++) {
+    for (let i = 120; i < 140; i++) {
       if (!this.decals[i].mesh.visible) {
         decal = this.decals[i];
         break;
       }
     }
     if (!decal) {
-      decal = this.decals[70 + Math.floor(Math.random() * 30)];
+      decal = this.decals[120 + Math.floor(Math.random() * 20)];
     }
     if (!decal) return;
 
-    decal.mesh.position.copy(pos);
-    decal.mesh.position.addScaledVector(normal, 0.04);
-    decal.mesh.lookAt(pos.clone().add(normal));
+    decal.mesh.position.set(groundPos.x, 0.024, groundPos.z);
+    decal.mesh.rotation.set(-Math.PI / 2, 0, Math.random() * Math.PI * 2);
+    decal.mesh.scale.setScalar(0.3);
+    decal.mesh.visible = true;
+    decal.life = 0;
+    decal.maxLife = 45 + Math.random() * 15;
+    decal.initialScale = 0.3;
+    decal.maxScale = size;
+    (decal.mesh.material as THREE.MeshBasicMaterial).opacity = 0.85;
+  }
+
+  // Wall Blood Splatter Decal — surface-anchored. `exact=true` places the
+  // decal directly on a real bullet impact point/normal; otherwise the given
+  // search direction is raycast for a nearby surface and the decal is skipped
+  // entirely when none exists — floating blood-in-air is never acceptable.
+  public static spawnWallBlood(
+    pos: THREE.Vector3,
+    normal: THREE.Vector3,
+    size: number = 1.6,
+    exact: boolean = false
+  ) {
+    // Find free wall decal (indices 90..119)
+    let decal: BloodDecal | null = null;
+    for (let i = 90; i < 120; i++) {
+      if (!this.decals[i].mesh.visible) {
+        decal = this.decals[i];
+        break;
+      }
+    }
+    if (!decal) {
+      decal = this.decals[90 + Math.floor(Math.random() * 30)];
+    }
+    if (!decal) return;
+
+    let anchor: THREE.Vector3;
+    let faceNormal: THREE.Vector3;
+
+    if (exact || this.envMeshes.length === 0) {
+      if (!exact) return; // no environment to search — skip rather than float
+      anchor = pos.clone();
+      faceNormal = normal.clone().normalize();
+    } else {
+      this.wallRaycaster.set(pos, normal);
+      this.wallRaycaster.far = 3.2;
+      const solid = this.firstSolidHit(this.wallRaycaster.intersectObjects(this.envMeshes, true));
+      if (!solid) return; // no opaque wall in range — no decal
+      anchor = solid.point.clone();
+      faceNormal = solid.face
+        ? solid.face.normal.clone().transformDirection(solid.object.matrixWorld)
+        : normal.clone().negate();
+    }
+
+    decal.mesh.position.copy(anchor);
+    decal.mesh.position.addScaledVector(faceNormal, 0.04);
+    decal.mesh.lookAt(anchor.clone().add(faceNormal));
     decal.mesh.scale.set(size, size * 1.3, 1);
     decal.mesh.visible = true;
     decal.life = 0;
@@ -474,8 +574,10 @@ export class ParticleSystem {
     p.rotVelocity.set(Math.random() * 20, Math.random() * 20, 0);
   }
 
-  // Explosive barrel explosion burst
-  public static spawnExplosion(pos: THREE.Vector3) {
+  // Explosive barrel explosion burst. `groundMark = false` skips the scorch
+  // decal — used for the RPG's muzzle backblast so firing never stamps the
+  // ground at the player's own feet.
+  public static spawnExplosion(pos: THREE.Vector3, groundMark: boolean = true) {
     for (let i = 0; i < 35; i++) {
       const p = this.getFreeParticle();
       if (!p) break;
@@ -500,8 +602,10 @@ export class ParticleSystem {
       p.rotVelocity.set(0, 0, 0);
     }
 
-    // Explosion ground scorch decal
-    this.spawnBloodDecal(new THREE.Vector3(pos.x, 0.02, pos.z), 3.5);
+    // Explosion ground scorch decal (charred blast residue, NOT blood)
+    if (groundMark) {
+      this.spawnScorchDecal(new THREE.Vector3(pos.x, 0.02, pos.z), 3.5);
+    }
   }
 
   // Drop Pickups (Ammo box, Medkit, Cash)

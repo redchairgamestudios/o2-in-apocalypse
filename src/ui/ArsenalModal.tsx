@@ -111,6 +111,16 @@ export const ArsenalModal: React.FC<ArsenalModalProps> = ({
     }
   };
 
+  const handleBuyAirstrike = () => {
+    if (saveData.credits >= 400 && (saveData.airstrikes || 0) < 20) {
+      SaveManager.addCredits(-400);
+      SaveManager.addAirstrikes(1);
+      soundFx.playCashEarned();
+      soundFx.playRadioTransmission();
+      onDataChanged();
+    }
+  };
+
   const handleRecruitAlly = () => {
     if (SaveManager.recruitAlly()) {
       soundFx.playCashEarned();
@@ -153,12 +163,12 @@ export const ArsenalModal: React.FC<ArsenalModalProps> = ({
   };
 
   return (
-    <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col p-4 md:p-8 pointer-events-auto overflow-y-auto select-none touch-manipulation">
+    <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col p-4 md:p-8 short:p-3 pointer-events-auto overflow-y-auto select-none touch-manipulation">
       {/* Top Header */}
-      <div className="flex justify-between items-center pb-4 border-b border-zinc-800">
-        <div className="flex items-center gap-3">
-          <Wrench className="w-6 h-6 text-amber-500" />
-          <h2 className="font-teko text-3xl md:text-4xl font-bold tracking-wide text-white leading-none">
+      <div className="flex flex-wrap justify-between items-center pb-4 border-b border-zinc-800 gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <Wrench className="w-6 h-6 text-amber-500 shrink-0" />
+          <h2 className="font-teko text-2xl sm:text-3xl md:text-4xl font-bold tracking-wide text-white leading-none">
             MILITARY ARSENAL & SQUAD WORKBENCH
           </h2>
         </div>
@@ -193,10 +203,10 @@ export const ArsenalModal: React.FC<ArsenalModalProps> = ({
       </div>
 
       {/* Navigation Tabs */}
-      <div className="flex flex-wrap items-center gap-3 mt-4 border-b border-zinc-800 pb-3">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-3 sm:mt-4 border-b border-zinc-800 pb-3">
         <button
           onClick={() => setActiveTab('weapons')}
-          className={`px-5 py-2 rounded-lg font-teko text-xl font-bold tracking-wide cursor-pointer transition-all flex items-center gap-2 ${
+          className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-lg font-teko text-lg sm:text-xl font-bold tracking-wide cursor-pointer transition-all flex items-center gap-2 ${
             activeTab === 'weapons'
               ? 'bg-red-600 text-white shadow-lg shadow-red-950/60 border border-red-400'
               : 'bg-zinc-900/80 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
@@ -208,7 +218,7 @@ export const ArsenalModal: React.FC<ArsenalModalProps> = ({
 
         <button
           onClick={() => setActiveTab('tactical')}
-          className={`px-5 py-2 rounded-lg font-teko text-xl font-bold tracking-wide cursor-pointer transition-all flex items-center gap-2 ${
+          className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-lg font-teko text-lg sm:text-xl font-bold tracking-wide cursor-pointer transition-all flex items-center gap-2 ${
             activeTab === 'tactical'
               ? 'bg-amber-600 text-white shadow-lg shadow-amber-950/60 border border-amber-400'
               : 'bg-zinc-900/80 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
@@ -225,7 +235,7 @@ export const ArsenalModal: React.FC<ArsenalModalProps> = ({
 
         <button
           onClick={() => setActiveTab('drone')}
-          className={`px-5 py-2 rounded-lg font-teko text-xl font-bold tracking-wide cursor-pointer transition-all flex items-center gap-2 ${
+          className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-lg font-teko text-lg sm:text-xl font-bold tracking-wide cursor-pointer transition-all flex items-center gap-2 ${
             activeTab === 'drone'
               ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-950/60 border border-cyan-400'
               : 'bg-zinc-900/80 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
@@ -243,7 +253,7 @@ export const ArsenalModal: React.FC<ArsenalModalProps> = ({
         {onOpenBuyCoins && (
           <button
             onClick={onOpenBuyCoins}
-            className="px-4 py-2 rounded-lg font-teko text-xl font-bold tracking-wide cursor-pointer transition-all flex items-center gap-2 bg-gradient-to-r from-emerald-950/80 to-zinc-900 hover:from-emerald-900 hover:to-zinc-800 text-emerald-300 border border-emerald-500/50 sm:ml-auto"
+            className="px-4 py-1.5 sm:py-2 rounded-lg font-teko text-lg sm:text-xl font-bold tracking-wide cursor-pointer transition-all flex items-center gap-2 bg-gradient-to-r from-emerald-950/80 to-zinc-900 hover:from-emerald-900 hover:to-zinc-800 text-emerald-300 border border-emerald-500/50 sm:ml-auto short:hidden"
           >
             <Coins className="w-4 h-4 text-emerald-400" />
             REQUISITION COINS (FREE)
@@ -346,7 +356,53 @@ export const ArsenalModal: React.FC<ArsenalModalProps> = ({
             </button>
           </div>
 
-          {/* Card 3: Military High-Beam Tactical Flashlight ($500) */}
+          {/* Card 3: Satellite Air Strike Charges */}
+          <div className="bg-zinc-950/90 border border-zinc-800 hover:border-orange-500/50 p-5 rounded-xl flex flex-col justify-between shadow-xl transition-colors">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-3 bg-orange-950/60 border border-orange-600/80 rounded-lg text-orange-400">
+                  <Zap className="w-7 h-7" />
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] font-mono text-zinc-400 uppercase">INVENTORY</div>
+                  <div className="font-teko text-3xl font-bold text-amber-400 leading-none">
+                    {saveData.airstrikes || 0} / 20
+                  </div>
+                </div>
+              </div>
+
+              <h3 className="font-teko text-2xl font-bold text-white mb-1">SATELLITE STRIKE CHARGE</h3>
+              <p className="font-military text-xs text-zinc-400 leading-relaxed mb-4">
+                Kinetic JDAM payload for the Ordinance Tablet. Annihilates everything in a 15-meter radius with 800 damage. Requires an active Sentry Turret uplink to designate targets.
+              </p>
+
+              <div className="bg-zinc-900/80 p-2.5 rounded border border-zinc-800 space-y-1 mb-4 text-xs font-mono">
+                <div className="flex justify-between text-zinc-300">
+                  <span>Blast Damage:</span>
+                  <span className="text-red-400 font-bold">800 HP (AoE)</span>
+                </div>
+                <div className="flex justify-between text-zinc-300">
+                  <span>Kill Radius:</span>
+                  <span className="text-amber-400 font-bold">15.0 Meters</span>
+                </div>
+                <div className="flex justify-between text-zinc-300">
+                  <span>Requires:</span>
+                  <span className="text-sky-300 font-bold">Active Turret Uplink</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={handleBuyAirstrike}
+              disabled={saveData.credits < 400 || (saveData.airstrikes || 0) >= 20}
+              className="w-full py-3 rounded-lg bg-orange-600 hover:bg-orange-500 disabled:opacity-40 disabled:cursor-not-allowed font-teko text-xl font-bold text-white shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Plus className="w-5 h-5" />
+              {(saveData.airstrikes || 0) >= 20 ? 'MAX STACK (20)' : 'PURCHASE STRIKE ($400)'}
+            </button>
+          </div>
+
+          {/* Card 4: Military High-Beam Tactical Flashlight ($500) */}
           <div className="bg-zinc-950/90 border border-zinc-800 hover:border-amber-500/50 p-5 rounded-xl flex flex-col justify-between shadow-xl relative overflow-hidden transition-colors">
             <div>
               <div className="flex items-center justify-between mb-3">
@@ -408,7 +464,7 @@ export const ArsenalModal: React.FC<ArsenalModalProps> = ({
             )}
           </div>
 
-          {/* Card 4: Combat Ally Squad */}
+          {/* Card 5: Combat Ally Squad */}
           <div className="bg-zinc-950/90 border-2 border-amber-500/60 p-5 rounded-xl flex flex-col justify-between shadow-2xl relative overflow-hidden">
             <div className="absolute -top-6 -right-6 w-24 h-24 bg-amber-500/10 rounded-full blur-xl pointer-events-none" />
 

@@ -26,7 +26,7 @@ const DEFAULT_SETTINGS: GameSettings = {
 
 const DEFAULT_SAVE_DATA: PlayerSaveData = {
   credits: 450, // Starting cash bonus for vertical slice excitement
-  unlockedWeapons: ['pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper'], // All weapons unlocked so player can swap to all guns!
+  unlockedWeapons: ['pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper', 'rocket', 'katana', 'airstrike'], // All weapons unlocked so player can swap to all guns!
   equippedWeapon: 'pistol',
   upgrades: {
     pistol: { damageLevel: 0, magLevel: 0, fireRateLevel: 0, reloadLevel: 0 },
@@ -35,11 +35,15 @@ const DEFAULT_SAVE_DATA: PlayerSaveData = {
     smg: { damageLevel: 0, magLevel: 0, fireRateLevel: 0, reloadLevel: 0 },
     heavy: { damageLevel: 0, magLevel: 0, fireRateLevel: 0, reloadLevel: 0 },
     sniper: { damageLevel: 0, magLevel: 0, fireRateLevel: 0, reloadLevel: 0 },
+    rocket: { damageLevel: 0, magLevel: 0, fireRateLevel: 0, reloadLevel: 0 },
+    katana: { damageLevel: 0, magLevel: 0, fireRateLevel: 0, reloadLevel: 0 },
+    airstrike: { damageLevel: 0, magLevel: 0, fireRateLevel: 0, reloadLevel: 0 },
   },
   completedMissions: [],
   highestMissionUnlocked: 1,
   grenades: 3, // Start with 3 tactical frag grenades
   turrets: 1,  // Start with 1 deployable sentry turret
+  airstrikes: 20, // Start with 20 satellite strike charges (generous for testing)
   hasAllyRecruit: false, // Up to 5 combat allies can be recruited in Arsenal
   allyCount: 0,
   isAllyDeployed: true,
@@ -62,11 +66,12 @@ export class SaveManager {
           ...parsed,
           unlockedWeapons: Array.from(new Set([
             ...(Array.isArray(parsed.unlockedWeapons) ? parsed.unlockedWeapons : []),
-            'pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper'
+            'pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper', 'rocket', 'katana', 'airstrike'
           ] as WeaponTypeKey[])),
           allyCount: typeof parsed.allyCount === 'number' ? parsed.allyCount : (parsed.hasAllyRecruit ? 1 : 0),
           hasAllyRecruit: Boolean(parsed.hasAllyRecruit || (parsed.allyCount && parsed.allyCount > 0)),
           isAllyDeployed: parsed.isAllyDeployed !== false,
+          airstrikes: typeof parsed.airstrikes === 'number' ? parsed.airstrikes : DEFAULT_SAVE_DATA.airstrikes,
           hasPowerfulFlashlight: Boolean(parsed.hasPowerfulFlashlight),
           hasDrone: Boolean(parsed.hasDrone),
           droneUpgrades: {
@@ -174,6 +179,20 @@ export class SaveManager {
 
   public static addTurrets(count: number): void {
     this.data.turrets = Math.min(5, (this.data.turrets || 0) + count);
+    this.save();
+  }
+
+  public static useAirstrike(): boolean {
+    if (this.data.airstrikes > 0) {
+      this.data.airstrikes--;
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  public static addAirstrikes(count: number): void {
+    this.data.airstrikes = Math.min(20, (this.data.airstrikes || 0) + count);
     this.save();
   }
 

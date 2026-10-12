@@ -1,0 +1,522 @@
+/* ============================================================
+   TACTICAL LOBBY CSS — AAA Military-Zombie Survival HUD
+   ============================================================ */
+
+/* --- FONTS --- */
+.font-rajdhani { font-family: 'Rajdhani', 'Chakra Petch', sans-serif; }
+.font-oswald { font-family: 'Oswald', 'Teko', sans-serif; }
+
+/* --- TACTICAL PANEL CLIP PATHS --- */
+.tactical-panel {
+  clip-path: polygon(
+    0 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% 100%,
+    10px 100%,
+    0 calc(100% - 10px)
+  );
+}
+
+.tactical-panel-lg {
+  clip-path: polygon(
+    0 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    100% 100%,
+    14px 100%,
+    0 calc(100% - 14px)
+  );
+}
+
+.tactical-panel-right {
+  clip-path: polygon(
+    10px 0,
+    100% 0,
+    100% calc(100% - 10px),
+    calc(100% - 10px) 100%,
+    0 100%,
+    0 10px
+  );
+}
+
+/* --- SCANLINE OVERLAY --- */
+.scanline-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.04) 2px,
+    rgba(0, 0, 0, 0.04) 4px
+  );
+  animation: scanlineScroll 8s linear infinite;
+}
+
+@keyframes scanlineScroll {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 200px; }
+}
+
+/* --- ANIMATED SCAN LINE (horizontal sweep) --- */
+.scan-line-effect {
+  position: relative;
+  overflow: hidden;
+}
+
+.scan-line-effect::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 23, 23, 0.08) 45%,
+    rgba(255, 23, 23, 0.15) 50%,
+    rgba(255, 23, 23, 0.08) 55%,
+    transparent 100%
+  );
+  animation: scanSweep 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes scanSweep {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+/* --- FILM GRAIN --- */
+.film-grain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 99;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='1'/%3E%3C/svg%3E");
+  background-size: 128px 128px;
+  animation: grainShift 0.5s steps(4) infinite;
+}
+
+@keyframes grainShift {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(-2px, 1px); }
+  50% { transform: translate(1px, -1px); }
+  75% { transform: translate(-1px, 2px); }
+  100% { transform: translate(0, 0); }
+}
+
+/* --- VIGNETTE --- */
+.lobby-vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 98;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 50%,
+    rgba(0, 0, 0, 0.4) 80%,
+    rgba(0, 0, 0, 0.7) 100%
+  );
+}
+
+/* --- CORNER BRACKETS --- */
+.corner-brackets {
+  position: relative;
+}
+
+.corner-brackets::before,
+.corner-brackets::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+
+.corner-brackets::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid rgba(255, 23, 23, 0.6);
+  border-left: 2px solid rgba(255, 23, 23, 0.6);
+}
+
+.corner-brackets::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid rgba(255, 23, 23, 0.6);
+  border-right: 2px solid rgba(255, 23, 23, 0.6);
+}
+
+/* --- RADAR --- */
+.radar-container {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid rgba(112, 227, 92, 0.4);
+  background: radial-gradient(circle, rgba(112, 227, 92, 0.05) 0%, rgba(0,0,0,0.6) 100%);
+  overflow: hidden;
+}
+
+.radar-grid {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+}
+
+.radar-grid::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  background: rgba(112, 227, 92, 0.2);
+}
+
+.radar-grid::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: rgba(112, 227, 92, 0.2);
+}
+
+.radar-sweep {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 50%;
+  height: 2px;
+  transform-origin: left center;
+  background: linear-gradient(90deg, rgba(112, 227, 92, 0.8) 0%, transparent 100%);
+  animation: radarSweep 2.5s linear infinite;
+  box-shadow: 0 0 6px rgba(112, 227, 92, 0.5);
+}
+
+@keyframes radarSweep {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.radar-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  transform: translate(-50%, -50%);
+  background: #70E35C;
+  border-radius: 50%;
+  box-shadow: 0 0 4px rgba(112, 227, 92, 0.6);
+}
+
+.radar-dot {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: #FF1717;
+  border-radius: 50%;
+  box-shadow: 0 0 3px rgba(255, 23, 23, 0.6);
+}
+
+.radar-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+  border: 1px solid rgba(112, 227, 92, 0.12);
+}
+
+.radar-ring-1 {
+  width: 30%;
+  height: 30%;
+  transform: translate(-50%, -50%);
+}
+
+.radar-ring-2 {
+  width: 65%;
+  height: 65%;
+  transform: translate(-50%, -50%);
+}
+
+/* --- AUDIO EQUALIZER --- */
+.eq-bar {
+  display: inline-block;
+  width: 3px;
+  background: #70E35C;
+  border-radius: 1px 1px 0 0;
+  animation: eqBounce 0.6s ease-in-out infinite alternate;
+}
+
+.eq-bar:nth-child(1) { height: 8px; animation-delay: 0s; }
+.eq-bar:nth-child(2) { height: 14px; animation-delay: 0.15s; }
+.eq-bar:nth-child(3) { height: 6px; animation-delay: 0.3s; }
+.eq-bar:nth-child(4) { height: 11px; animation-delay: 0.1s; }
+.eq-bar:nth-child(5) { height: 9px; animation-delay: 0.25s; }
+
+@keyframes eqBounce {
+  0% { transform: scaleY(0.3); }
+  100% { transform: scaleY(1); }
+}
+
+/* --- WARNING STRIPES --- */
+.warning-stripes {
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 4px,
+    rgba(255, 157, 24, 0.15) 4px,
+    rgba(255, 157, 24, 0.15) 8px
+  );
+}
+
+/* --- GLOW EFFECTS --- */
+.glow-red { box-shadow: 0 0 15px rgba(255, 23, 23, 0.3), inset 0 0 15px rgba(255, 23, 23, 0.05); }
+.glow-orange { box-shadow: 0 0 12px rgba(255, 157, 24, 0.2), inset 0 0 12px rgba(255, 157, 24, 0.03); }
+.glow-cyan { box-shadow: 0 0 12px rgba(38, 217, 255, 0.2), inset 0 0 12px rgba(38, 217, 255, 0.03); }
+.glow-green { box-shadow: 0 0 12px rgba(112, 227, 92, 0.2), inset 0 0 12px rgba(112, 227, 92, 0.03); }
+.glow-gold { box-shadow: 0 0 12px rgba(245, 184, 61, 0.2), inset 0 0 12px rgba(245, 184, 61, 0.03); }
+
+/* --- NAV CARD HOVER ANIMATION --- */
+.nav-card {
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.nav-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.03) 50%,
+    transparent 100%
+  );
+  transition: left 0.5s ease;
+  pointer-events: none;
+}
+
+.nav-card:hover::before {
+  left: 100%;
+}
+
+.nav-card:hover {
+  transform: translateX(4px);
+}
+
+/* --- SELECTED NAV CARD --- */
+.nav-card-selected {
+  position: relative;
+  overflow: hidden;
+}
+
+.nav-card-selected::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 200%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 23, 23, 0.06) 45%,
+    rgba(255, 23, 23, 0.12) 50%,
+    rgba(255, 23, 23, 0.06) 55%,
+    transparent 100%
+  );
+  animation: selectedScan 2.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes selectedScan {
+  0% { left: -200%; }
+  100% { left: 100%; }
+}
+
+/* --- CHEVRON ANIMATION --- */
+.chevron-animate {
+  animation: chevronPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes chevronPulse {
+  0%, 100% { opacity: 0.6; transform: translateX(0); }
+  50% { opacity: 1; transform: translateX(3px); }
+}
+
+/* --- DEPLOY BUTTON --- */
+.deploy-btn {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.deploy-btn::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.1) 50%,
+    transparent 100%
+  );
+  animation: deployBtnScan 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes deployBtnScan {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+.deploy-btn:hover {
+  transform: scale(1.02);
+  box-shadow: 0 0 25px rgba(255, 23, 23, 0.4), 0 0 50px rgba(255, 23, 23, 0.15);
+}
+
+.deploy-btn:active {
+  transform: scale(0.98);
+}
+
+/* --- SIGNAL STRENGTH --- */
+.signal-bar {
+  display: inline-block;
+  width: 3px;
+  background: #70E35C;
+  border-radius: 1px;
+}
+
+/* --- STATUS INDICATOR PULSE --- */
+.status-pulse {
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+/* --- PROGRESS BAR SEGMENTS --- */
+.progress-segment {
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-segment::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 8px,
+    rgba(0, 0, 0, 0.3) 8px,
+    rgba(0, 0, 0, 0.3) 10px
+  );
+  pointer-events: none;
+}
+
+/* --- BLINKING INDICATOR --- */
+.blink-slow {
+  animation: blinkSlow 2.5s ease-in-out infinite;
+}
+
+@keyframes blinkSlow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* --- LOBBY BACKGROUND --- */
+.lobby-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* --- XP BAR GLOW --- */
+.xp-bar-fill {
+  position: relative;
+  overflow: hidden;
+}
+
+.xp-bar-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 8px rgba(255, 23, 23, 0.8);
+  animation: xpGlow 1.5s ease-in-out infinite;
+}
+
+@keyframes xpGlow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* ============================================================
+   LANDSCAPE SAFE-AREA HELPERS (viewport-fit=cover is enabled)
+   Keep lobby / HUD chrome clear of notches & home indicators.
+   ============================================================ */
+
+/* Horizontal safe padding: 12px base, 20px from sm — mirrors px-3 sm:px-5 */
+.safe-px {
+  padding-left: max(env(safe-area-inset-left), 0.75rem);
+  padding-right: max(env(safe-area-inset-right), 0.75rem);
+}
+
+@media (min-width: 640px) {
+  .safe-px {
+    padding-left: max(env(safe-area-inset-left), 1.25rem);
+    padding-right: max(env(safe-area-inset-right), 1.25rem);
+  }
+}
+
+/* In-game HUD header padding: 6px base, 12px sm, 20px md — mirrors p-1.5 sm:p-3 md:p-5 */
+.hud-safe-pad {
+  padding-top: max(env(safe-area-inset-top), 6px);
+  padding-right: max(env(safe-area-inset-right), 6px);
+  padding-bottom: 6px;
+  padding-left: max(env(safe-area-inset-left), 6px);
+}
+
+@media (min-width: 640px) {
+  .hud-safe-pad {
+    padding-top: max(env(safe-area-inset-top), 12px);
+    padding-right: max(env(safe-area-inset-right), 12px);
+    padding-bottom: 12px;
+    padding-left: max(env(safe-area-inset-left), 12px);
+  }
+}
+
+@media (min-width: 768px) {
+  .hud-safe-pad {
+    padding: 20px;
+  }
+}

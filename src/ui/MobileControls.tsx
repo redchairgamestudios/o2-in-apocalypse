@@ -148,9 +148,9 @@ export const MobileControls: React.FC<MobileControlsProps> = ({ inputRef, touchS
           }
           if (joystickBaseRef.current) {
             joystickBaseRef.current.style.opacity = '0.45';
-            joystickBaseRef.current.style.left = '28px';
+            joystickBaseRef.current.style.left = 'calc(28px + env(safe-area-inset-left))';
             joystickBaseRef.current.style.top = 'auto';
-            joystickBaseRef.current.style.bottom = '28px';
+            joystickBaseRef.current.style.bottom = 'calc(28px + env(safe-area-inset-bottom))';
           }
         }
 
@@ -204,10 +204,10 @@ export const MobileControls: React.FC<MobileControlsProps> = ({ inputRef, touchS
       className="absolute inset-0 pointer-events-none z-10 select-none overflow-hidden"
       style={{ touchAction: 'none' }}
     >
-      {/* Minimal Tactical Virtual Joystick Base (Resting bottom-left) */}
+      {/* Minimal Tactical Virtual Joystick Base (Resting bottom-left, notch-safe) */}
       <div
         ref={joystickBaseRef}
-        className="absolute bottom-7 left-7 w-28 h-28 rounded-full border border-emerald-500/30 bg-black/40 backdrop-blur-xs flex items-center justify-center pointer-events-none transition-opacity duration-200 shadow-lg shadow-black/60"
+        className="absolute left-[max(env(safe-area-inset-left),28px)] bottom-[max(env(safe-area-inset-bottom),28px)] w-28 h-28 rounded-full border border-emerald-500/30 bg-black/40 backdrop-blur-xs flex items-center justify-center pointer-events-none transition-opacity duration-200 shadow-lg shadow-black/60"
         style={{ opacity: 0.5 }}
       >
         {/* Subtle Cardinal Guides */}

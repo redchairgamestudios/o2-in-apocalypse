@@ -2,14 +2,17 @@ import * as THREE from 'three';
 import { MissionConfig, ObjectiveStep, GameStats, ZombieTypeKey } from '../types';
 import { CAMPAIGN_MISSIONS } from '../data/missions';
 import { ZombieManager } from '../zombies/ZombieManager';
+import { MissionEntityManager } from '../tactical/MissionEntityManager';
 import { soundFx } from '../audio/SoundEffects';
 import { SaveManager } from '../core/SaveManager';
+import { NavCollision } from '../core/NavCollision';
 
 interface QueuedSpawn {
   type: ZombieTypeKey;
   delayTimer: number;
   forceNarrowPath: boolean;
   bossOverride?: { isBoss: boolean; name: string; maxHp: number; scale?: number };
+  customPos?: THREE.Vector3;
 }
 
 export const MISSION_BOSS_DEFINITIONS: Record<number, { type: ZombieTypeKey; name: string; maxHp: number; scale: number }> = {
@@ -39,6 +42,13 @@ export class MissionManager {
   private spawnQueue: QueuedSpawn[] = [];
   public onVictoryCallback: ((stats: GameStats) => void) | null = null;
 
+  // Kill-count safety valve: cooldown between top-up packs and the no-progress
+  // watchdog that rescues missions when the only survivors are unreachable
+  private killTopUpCooldown: number = 0;
+  private timeSinceLastKill: number = 0;
+  private startPlayerPos: THREE.Vector3 | null = null;
+  private startPlayerYaw: number = Math.PI;
+
   public stats: GameStats = {
     kills: 0,
     headshots: 0,
@@ -53,7 +63,25 @@ export class MissionManager {
     this.zombieManager = zombieManager;
   }
 
-  public startMission(missionId: number) {
+  public interactRequested: boolean = false;
+
+  /** Nearest beacon target for the active objective (HUD distance + world marker). */
+  public getObjectiveAnchor(playerPos: THREE.Vector3): THREE.Vector3 | null {
+    const obj = this.getCurrentObjective();
+    if (!obj) return null;
+    if (obj.type === 'collect_samples') {
+      return MissionEntityManager.getNearestTarget(playerPos, 'sample');
+    }
+    if (obj.type === 'rescue_survivors') {
+      return MissionEntityManager.getNearestTarget(playerPos, 'survivor');
+    }
+    if (obj.targetPosition) {
+      return new THREE.Vector3(obj.targetPosition[0], obj.targetPosition[1], obj.targetPosition[2]);
+    }
+    return null;
+  }
+
+  public startMission(missionId: number, playerSpawn?: THREE.Vector3, playerYaw: number = Math.PI) {
     const mission = CAMPAIGN_MISSIONS.find((m) => m.id === missionId) || CAMPAIGN_MISSIONS[0];
     this.currentMission = JSON.parse(JSON.stringify(mission)); // clone
     this.currentObjectiveIndex = 0;
@@ -64,6 +92,10 @@ export class MissionManager {
     this.isMissionComplete = false;
     this.isMissionFailed = false;
     this.spawnQueue = [];
+    this.killTopUpCooldown = 6.0;
+    this.timeSinceLastKill = 0;
+    this.startPlayerPos = playerSpawn ? playerSpawn.clone() : null;
+    this.startPlayerYaw = playerYaw;
 
     this.stats = {
       kills: 0,
@@ -76,9 +108,33 @@ export class MissionManager {
     };
 
     this.zombieManager.clearAll();
+    MissionEntityManager.clearAll();
 
-    // Spawn dormant ambient sentries in the district so the world feels alive and populated
-    this.spawnInitialSentries(missionId);
+    // Mission 11: stage survivors & sample cases at validated open spots
+    if (missionId === 11) {
+      MissionEntityManager.init(this.zombieManager.getScene(), {
+        onSurvivorRescued: () => this.progressCountObjective('rescue_survivors'),
+        onSampleCollected: () => this.progressCountObjective('collect_samples'),
+      });
+      const spots: Array<[number, number]> = [
+        [-38, -46], [34, -52], [-40, 42], [36, 50],
+      ];
+      spots.forEach(([x, z], i) => {
+        MissionEntityManager.spawnSurvivor(`survivor_${i}`, MissionEntityManager.findOpenSpot(x, z));
+      });
+      const sampleSpots: Array<[number, number]> = [
+        [0, -84], [-52, 12], [48, 8],
+      ];
+      sampleSpots.forEach(([x, z], i) => {
+        MissionEntityManager.spawnSample(`sample_${i}`, MissionEntityManager.findOpenSpot(x, z));
+      });
+    }
+
+    // Spawn dormant ambient sentries far from the operator's sight
+    this.spawnInitialSentries(missionId, this.startPlayerPos, this.startPlayerYaw);
+
+    // Mark the first objective's trigger with the physical task console
+    this.placeObjectivePointer();
 
     // Check if initial objective has a survival timer
     const curObj = this.getCurrentObjective();
@@ -87,19 +143,25 @@ export class MissionManager {
     }
   }
 
-  private spawnInitialSentries(missionId: number) {
-    // Street sentries in dormant idle/wander mode
-    this.zombieManager.spawnZombie('walker', undefined, false);
-    this.zombieManager.spawnZombie('walker', undefined, false);
+  private spawnInitialSentries(missionId: number, playerSpawn?: THREE.Vector3 | null, playerYaw: number = Math.PI) {
+    // Street sentries in dormant idle/wander mode — always materialize out of
+    // the operator's sight so nothing pops into view.
+    const away = (fallback?: THREE.Vector3) =>
+      playerSpawn
+        ? this.zombieManager.pickDistantSpawnPoint(playerSpawn, playerYaw)
+        : fallback;
+
+    this.zombieManager.spawnZombie('walker', away(), false);
+    this.zombieManager.spawnZombie('walker', away(), false);
     // Alley / narrow path sentries
-    this.zombieManager.spawnZombie('walker', undefined, true);
-    this.zombieManager.spawnZombie('walker', undefined, true);
+    this.zombieManager.spawnZombie('walker', away(), true);
+    this.zombieManager.spawnZombie('walker', away(), true);
 
     if (missionId >= 2) {
-      this.zombieManager.spawnZombie('runner', undefined, true);
+      this.zombieManager.spawnZombie('runner', away(), true);
     }
     if (missionId >= 3) {
-      this.zombieManager.spawnZombie('brute', undefined, false);
+      this.zombieManager.spawnZombie('brute', away(), false);
     }
   }
 
@@ -117,7 +179,7 @@ export class MissionManager {
     return Math.round(playerPos.distanceTo(target));
   }
 
-  public update(delta: number, playerPos: THREE.Vector3, onVictory: (stats: GameStats) => void) {
+  public update(delta: number, playerPos: THREE.Vector3, playerYaw: number, onVictory: (stats: GameStats) => void) {
     this.onVictoryCallback = onVictory;
 
     if (!this.isMissionActive) return;
@@ -131,12 +193,14 @@ export class MissionManager {
 
     this.stats.missionTime += delta;
 
-    // Process staggered spawn queue
+    // Process staggered spawn queue — every hostile materializes OUT of the
+    // operator's sight and immediately hunts the player's current location.
     for (let i = this.spawnQueue.length - 1; i >= 0; i--) {
       this.spawnQueue[i].delayTimer -= delta;
       if (this.spawnQueue[i].delayTimer <= 0) {
         const item = this.spawnQueue[i];
-        this.zombieManager.spawnZombie(item.type, undefined, item.forceNarrowPath, item.bossOverride);
+        const spawnPos = item.customPos || this.zombieManager.pickDistantSpawnPoint(playerPos, playerYaw);
+        this.zombieManager.spawnZombie(item.type, spawnPos, item.forceNarrowPath, item.bossOverride, true);
         this.spawnQueue.splice(i, 1);
       }
     }
@@ -198,6 +262,32 @@ export class MissionManager {
       }
     }
 
+    // Kill-count safety valve: a kill objective can starve when the player
+    // spends kills before the objective activates (e.g. clearing the waves
+    // while the generator objective is still active) or when the only live
+    // stragglers are wedged somewhere unreachable. Once every wave has been
+    // enqueued and the district has run dry, funnel fresh hostiles toward
+    // the operator so the mission can always finish.
+    const killObj = this.getCurrentObjective();
+    if (killObj && killObj.type === 'kill_count' && killObj.targetCount) {
+      this.timeSinceLastKill += delta;
+      const wavesExhausted = this.currentWaveIndex >= (this.currentMission.waves?.length || 0);
+      if (wavesExhausted && this.spawnQueue.length === 0) {
+        this.killTopUpCooldown -= delta;
+        const remaining = killObj.targetCount - (killObj.currentCount || 0);
+        const aliveCount = this.zombieManager.zombies.filter((z) => !z.isDead).length;
+        const shortOnTargets = remaining > aliveCount;
+        const stalledOnStragglers = aliveCount > 0 && remaining > 0 && this.timeSinceLastKill > 25;
+        if ((shortOnTargets || stalledOnStragglers) && this.killTopUpCooldown <= 0) {
+          const packSize = Math.min(3, Math.max(1, shortOnTargets ? remaining - aliveCount : 2));
+          this.spawnTopUpPack(playerPos, packSize);
+          this.killTopUpCooldown = 4.0;
+        }
+      }
+    } else {
+      this.timeSinceLastKill = 0;
+    }
+
     // Handle Active Objective
     const obj = this.getCurrentObjective();
     if (!obj) {
@@ -234,10 +324,106 @@ export class MissionManager {
         this.advanceObjective(onVictory);
       }
     }
+
+    // Rescue & sample entities: animate beacons, handle proximity + [E] rescue
+    MissionEntityManager.update(delta, playerPos, this.interactRequested);
+    this.interactRequested = false;
+    // Animate the objective task pointer (blinking tip, spinning chevron)
+    MissionEntityManager.updateTaskPointer(delta);
+  }
+
+  /**
+   * Place the physical task pointer at the ACTIVE objective's trigger — the
+   * same component family as the generator console, so the next task is
+   * always marked by a real world object instead of a random spot.
+   */
+  private placeObjectivePointer() {
+    const scene = this.zombieManager.getScene();
+    if (!scene) return;
+
+    const obj = this.getCurrentObjective();
+    if (!obj || !obj.targetPosition) {
+      MissionEntityManager.clearTaskPointer();
+      return;
+    }
+
+    const pos = new THREE.Vector3(obj.targetPosition[0], 0, obj.targetPosition[2]);
+    if (obj.type === 'interact_object') {
+      // Interact objectives land on their own consoles/generators — stand the
+      // pointer 2.4m to the side so it doesn't clip inside the machine
+      MissionEntityManager.placeTaskPointer(scene, new THREE.Vector3(pos.x + 2.4, 0, pos.z), 0xf59e0b, 'INTERACT');
+    } else if (obj.type === 'reach_zone') {
+      MissionEntityManager.placeTaskPointer(scene, pos, 0x22d3ee, 'REACH');
+    } else if (obj.type === 'defeat_boss') {
+      MissionEntityManager.placeTaskPointer(scene, pos, 0xef4444, 'BOSS');
+    } else {
+      // Kill/survive/collect objectives have no fixed trigger point
+      MissionEntityManager.clearTaskPointer();
+    }
+  }
+
+  /** Count up the active rescue/sample objective (called by entity events). */
+  private progressCountObjective(type: 'rescue_survivors' | 'collect_samples') {
+    soundFx.playPickup();
+    const obj = this.getCurrentObjective();
+    if (!obj || obj.type !== type || !obj.targetCount) return;
+    obj.currentCount = (obj.currentCount || 0) + 1;
+    if (obj.currentCount >= obj.targetCount) {
+      this.advanceObjective(this.onVictoryCallback || undefined);
+    } else {
+      // Each pickup stirs the hive — another pack rushes the site
+      this.triggerMiniHorde();
+    }
+  }
+
+  /** Smaller ambush pack (4-6) triggered between rescue/sample progressions. */
+  private triggerMiniHorde() {
+    const hordeTypes: ZombieTypeKey[] = ['runner', 'walker', 'stalker', 'spitter', 'crawler'];
+    let delay = 0.4;
+    const count = 4 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < count; i++) {
+      delay += 0.4 + Math.random() * 0.3;
+      this.spawnQueue.push({
+        type: hordeTypes[Math.floor(Math.random() * hordeTypes.length)],
+        delayTimer: delay,
+        forceNarrowPath: i % 2 === 1,
+      });
+    }
+  }
+
+  /**
+   * Mission-completion guarantee: drop a small hostile pack on open street
+   * 16-26m from the operator (never inside buildings) when the kill objective
+   * would otherwise be impossible to finish.
+   */
+  private spawnTopUpPack(playerPos: THREE.Vector3, count: number) {
+    const pool: ZombieTypeKey[] = ['walker', 'runner', 'crawler', 'spitter'];
+    let delay = 0.3;
+    for (let i = 0; i < count; i++) {
+      delay += 0.5 + Math.random() * 0.4;
+      let customPos: THREE.Vector3 | undefined;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const ang = Math.random() * Math.PI * 2;
+        const dist = 16 + Math.random() * 10;
+        const x = playerPos.x + Math.sin(ang) * dist;
+        const z = playerPos.z + Math.cos(ang) * dist;
+        if (!NavCollision.isBlocked(x, z, 1.2)) {
+          customPos = new THREE.Vector3(x, 0, z);
+          break;
+        }
+      }
+      this.spawnQueue.push({
+        type: pool[Math.floor(Math.random() * pool.length)],
+        delayTimer: delay,
+        forceNarrowPath: false,
+        customPos,
+      });
+    }
   }
 
   public recordKill(isHeadshot: boolean, reward: number, isBoss: boolean = false) {
     this.stats.kills++;
+    this.timeSinceLastKill = 0;
     if (isHeadshot) this.stats.headshots++;
     this.stats.creditsEarned += reward;
 
@@ -309,6 +495,8 @@ export class MissionManager {
       if (nextObj && nextObj.timerSeconds) {
         this.surviveTimer = nextObj.timerSeconds;
       }
+      // Re-point the task console at the next objective's trigger
+      this.placeObjectivePointer();
       // Start another horde of zombies upon objective completion!
       this.triggerObjectiveHorde();
     }
@@ -317,6 +505,9 @@ export class MissionManager {
   private completeMission(onVictory?: (stats: GameStats) => void) {
     if (this.isMissionComplete) return;
     this.isMissionComplete = true;
+
+    // Mission over — retire the task pointer
+    MissionEntityManager.clearTaskPointer();
 
     // Bonus mission reward
     const bonus = this.currentMission.baseRewardCredits;

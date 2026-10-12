@@ -2,6 +2,12 @@ import * as THREE from 'three';
 import { ZombieConfig, ZombieTypeKey, ZombieState } from '../types';
 import { ProceduralTextures } from '../textures/ProceduralTextures';
 import { MeltyZombieTexture, MELTY_UV } from '../textures/MeltyZombieTexture';
+import { GltfZombieFactory, GltfRig } from './GltfZombieFactory';
+import { ColossusModel } from './ColossusModel';
+
+function speedMultDefault(_type: ZombieTypeKey): number {
+  return 0.88 + Math.random() * 0.24;
+}
 
 export interface ZombieInstance {
   id: string;
@@ -28,6 +34,10 @@ export interface ZombieInstance {
   head: THREE.Group;
   neck: THREE.Group;
   jaw: THREE.Group;
+  // Realistic GLTF zombie rig (null-ish for legacy procedural zombies)
+  gltfRig?: (GltfRig & { weakpointMesh?: THREE.Mesh }) | null;
+  // Static-sculpt boss rig (Blind Hunter colossus) — no skeleton, procedural sway
+  staticRig?: { root: THREE.Group } | null;
   isDead: boolean;
   isDecapitated: boolean;
   isDismemberedArm: boolean;
@@ -49,6 +59,10 @@ export interface ZombieInstance {
   strafeTimer: number;
   barrelMesh?: THREE.Mesh;
   bleedTimer?: number;
+  // Location-specific dismemberment state: accumulated trauma per limb and
+  // the record of limbs already torn off (arms end attack reach, legs cripple)
+  limbDamage?: Partial<Record<'ARM_L' | 'ARM_R' | 'LEG_L' | 'LEG_R', number>>;
+  severedLimbs?: Partial<Record<'ARM_L' | 'ARM_R' | 'LEG_L' | 'LEG_R', boolean>>;
   isBoss?: boolean;
   bossName?: string;
   isFrenzied?: boolean;
@@ -102,6 +116,30 @@ export class ZombieModelFactory {
     });
   }
 
+  private static getDetectionRadius(type: ZombieTypeKey): number {
+    switch (type) {
+      case 'runner':
+        return 22 + (Math.random() - 0.5) * 4;
+      case 'screamer':
+        return 28 + (Math.random() - 0.5) * 4;
+      case 'stalker':
+        return 30 + (Math.random() - 0.5) * 4;
+      case 'brute':
+        return 19 + (Math.random() - 0.5) * 4;
+      case 'enforcer':
+        return 22 + (Math.random() - 0.5) * 4;
+      case 'spitter':
+        return 24 + (Math.random() - 0.5) * 4;
+      case 'colossus':
+        return 34;
+      case 'crawler':
+        return 15 + (Math.random() - 0.5) * 3;
+      case 'walker':
+      default:
+        return 17 + (Math.random() - 0.5) * 4;
+    }
+  }
+
   public static createZombie(
     type: ZombieTypeKey,
     id: string,
@@ -111,6 +149,137 @@ export class ZombieModelFactory {
     spawnPos?: THREE.Vector3
   ): ZombieInstance {
     this.initMaterials();
+
+    // Boss colossus uses the authored Blind Hunter sculpt when streamed in
+    const colossusBuilt = type === 'colossus' ? ColossusModel.createRig(id, config) : null;
+    if (colossusBuilt) {
+      const root = new THREE.Group();
+      root.name = `zombie_${id}`;
+      root.add(colossusBuilt.root);
+      // Hitboxes are world-sized: parent them to the UNSCALED outer group
+      for (const hb of colossusBuilt.hitboxMeshes) {
+        root.add(hb);
+      }
+      return {
+        id,
+        type,
+        config,
+        mesh: root,
+        headMesh: colossusBuilt.headMesh,
+        weakpointMesh: colossusBuilt.weakpointMesh,
+        hitboxMeshes: colossusBuilt.hitboxMeshes,
+        hp: config.maxHp,
+        maxHp: config.maxHp,
+        state: isFromNarrowPath ? 'WANDER' : (Math.random() < 0.35 ? 'WANDER' : 'IDLE'),
+        stateTimer: 0,
+        attackTimer: 1.5,
+        staggerTimer: 0,
+        speed: config.speed,
+        targetPosition: new THREE.Vector3(),
+        animTime: Math.random() * 10,
+        leftArm: new THREE.Group(),
+        rightArm: new THREE.Group(),
+        leftLeg: new THREE.Group(),
+        rightLeg: new THREE.Group(),
+        torso: new THREE.Group(),
+        head: new THREE.Group(),
+        neck: new THREE.Group(),
+        jaw: new THREE.Group(),
+        gltfRig: null,
+        staticRig: { root: colossusBuilt.root },
+        isDead: false,
+        isDecapitated: false,
+        isDismemberedArm: false,
+        deathTimer: 0,
+        groanTimer: Math.random() * 5 + 3,
+        detectionRadius: ZombieModelFactory.getDetectionRadius(type),
+        isAlerted: false,
+        alertReactionTimer: 0.4 + Math.random() * 1.2,
+        wanderTimer: Math.random() * 4 + 2,
+        wanderTarget: null,
+        spawnOrigin: spawnPos ? spawnPos.clone() : new THREE.Vector3(),
+        isFromNarrowPath,
+        narrowPathExit: narrowPathExit ? narrowPathExit.clone() : null,
+        hasExitedNarrowPath: false,
+        speedMultiplier: speedMultDefault(type),
+        slowTimer: 0,
+        slowMultiplier: 1.0,
+        strafeDir: Math.random() < 0.5 ? -1 : 1,
+        strafeTimer: Math.random() * 2 + 1,
+        isBoss: config.isBoss || type === 'colossus',
+        bossName: config.name,
+        isFrenzied: false,
+        frenzyTimer: 0,
+        frenzyDuration: 3.5,
+        frenzyCooldownTimer: 7.0 + Math.random() * 3.0,
+        exhaustionTimer: 0,
+        targetIsDrone: false,
+      };
+    }
+
+    // Prefer the realistic skinned GLTF zombie; fall back to the procedural
+    // rig only while the model stream is still loading.
+    const built = GltfZombieFactory.createRig(id, config);
+    if (built) {
+      const root = new THREE.Group();
+      root.name = `zombie_${id}`;
+      root.add(built.rig.root);
+      return {
+        id,
+        type,
+        config,
+        mesh: root,
+        headMesh: built.headMesh,
+        weakpointMesh: built.rig.weakpointMesh,
+        hitboxMeshes: built.hitboxMeshes,
+        hp: config.maxHp,
+        maxHp: config.maxHp,
+        state: isFromNarrowPath ? 'WANDER' : (Math.random() < 0.35 ? 'WANDER' : 'IDLE'),
+        stateTimer: 0,
+        attackTimer: 1.5,
+        staggerTimer: 0,
+        speed: config.speed,
+        targetPosition: new THREE.Vector3(),
+        animTime: Math.random() * 10,
+        leftArm: new THREE.Group(),
+        rightArm: new THREE.Group(),
+        leftLeg: new THREE.Group(),
+        rightLeg: new THREE.Group(),
+        torso: new THREE.Group(),
+        head: new THREE.Group(),
+        neck: new THREE.Group(),
+        jaw: new THREE.Group(),
+        gltfRig: built.rig,
+        isDead: false,
+        isDecapitated: false,
+        isDismemberedArm: false,
+        deathTimer: 0,
+        groanTimer: Math.random() * 5 + 3,
+        detectionRadius: ZombieModelFactory.getDetectionRadius(type),
+        isAlerted: false,
+        alertReactionTimer: 0.4 + Math.random() * 1.2,
+        wanderTimer: Math.random() * 4 + 2,
+        wanderTarget: null,
+        spawnOrigin: spawnPos ? spawnPos.clone() : new THREE.Vector3(),
+        isFromNarrowPath,
+        narrowPathExit: narrowPathExit ? narrowPathExit.clone() : null,
+        hasExitedNarrowPath: false,
+        speedMultiplier: speedMultDefault(type),
+        slowTimer: 0,
+        slowMultiplier: 1.0,
+        strafeDir: Math.random() < 0.5 ? -1 : 1,
+        strafeTimer: Math.random() * 2 + 1,
+        isBoss: config.isBoss || type === 'colossus',
+        bossName: config.name,
+        isFrenzied: false,
+        frenzyTimer: 0,
+        frenzyDuration: 3.5,
+        frenzyCooldownTimer: 7.0 + Math.random() * 3.0,
+        exhaustionTimer: 0,
+        targetIsDrone: false,
+      };
+    }
+
     const root = new THREE.Group();
     root.name = `zombie_${id}`;
 
@@ -378,7 +547,7 @@ export class ZombieModelFactory {
       MeltyZombieTexture.remapGeometryUV(bicepGeo, MELTY_UV.LIMB_ARM);
       const bicep = new THREE.Mesh(bicepGeo, meltySkinMat);
       bicep.castShadow = true;
-      bicep.userData = { zombieId: id, hitZone: 'LIMB' };
+      bicep.userData = { zombieId: id, hitZone: 'LIMB', limb: isLeft ? 'ARM_L' : 'ARM_R' };
       hitboxMeshes.push(bicep);
       armGroup.add(bicep);
 
@@ -399,7 +568,7 @@ export class ZombieModelFactory {
       MeltyZombieTexture.remapGeometryUV(foreArmGeo, MELTY_UV.LIMB_ARM);
       const foreArm = new THREE.Mesh(foreArmGeo, meltySkinMat);
       foreArm.castShadow = true;
-      foreArm.userData = { zombieId: id, hitZone: 'LIMB' };
+      foreArm.userData = { zombieId: id, hitZone: 'LIMB', limb: isLeft ? 'ARM_L' : 'ARM_R' };
       hitboxMeshes.push(foreArm);
       foreArmGroup.add(foreArm);
 
@@ -457,7 +626,7 @@ export class ZombieModelFactory {
       thighGeo.translate(0, -0.22 * scale, 0);
       const thigh = new THREE.Mesh(thighGeo, camoPantsMat);
       thigh.castShadow = true;
-      thigh.userData = { zombieId: id, hitZone: 'LIMB' };
+      thigh.userData = { zombieId: id, hitZone: 'LIMB', limb: isLeft ? 'LEG_L' : 'LEG_R' };
       hitboxMeshes.push(thigh);
       legGroup.add(thigh);
 
@@ -478,7 +647,7 @@ export class ZombieModelFactory {
       shinGeo.translate(0, -0.65 * scale, 0);
       const shin = new THREE.Mesh(shinGeo, darkBootMat);
       shin.castShadow = true;
-      shin.userData = { zombieId: id, hitZone: 'LIMB' };
+      shin.userData = { zombieId: id, hitZone: 'LIMB', limb: isLeft ? 'LEG_L' : 'LEG_R' };
       hitboxMeshes.push(shin);
       legGroup.add(shin);
 
@@ -883,6 +1052,29 @@ export class ZombieModelFactory {
   }
 
   public static updateZombieAnimation(zombie: ZombieInstance, delta: number, distanceToPlayer: number) {
+    // Static boss sculpt: procedural shamble sway, no skeleton
+    if (zombie.staticRig) {
+      this.updateStaticBossAnimation(zombie, delta);
+      return;
+    }
+
+    // Realistic GLTF rig: state-driven animation clips via its AnimationMixer
+    if (zombie.gltfRig) {
+      if (zombie.isDead) {
+        zombie.deathTimer += delta;
+        GltfZombieFactory.updateAnimation(zombie, delta);
+        return;
+      }
+      if (zombie.slowTimer > 0) {
+        zombie.slowTimer -= delta;
+        if (zombie.slowTimer <= 0) {
+          zombie.slowMultiplier = 1.0;
+        }
+      }
+      GltfZombieFactory.updateAnimation(zombie, delta);
+      return;
+    }
+
     if (zombie.isDead) {
       zombie.deathTimer += delta;
 
@@ -1022,10 +1214,111 @@ export class ZombieModelFactory {
     zombie.head.rotation.z = Math.sin(t * 0.6) * 0.12;
     zombie.jaw.rotation.x = (isWander ? 0.08 : 0.14) + Math.sin(t * 2.2) * 0.14;
 
-    // Pulsating weakpoint on Colossus
-    if (zombie.weakpointMesh) {
-      const pulse = 1.0 + Math.sin(t * 7) * 0.22;
-      zombie.weakpointMesh.scale.set(pulse, pulse, pulse);
+      // Pulsating weakpoint on Colossus
+      if (zombie.weakpointMesh) {
+        const pulse = 1.0 + Math.sin(t * 7) * 0.22;
+        zombie.weakpointMesh.scale.set(pulse, pulse, pulse);
+      }
+  }
+
+  /** Static boss sculpt: shamble sway while alive, slow topple on death. */
+  private static updateStaticBossAnimation(zombie: ZombieInstance, delta: number) {
+    const root = zombie.staticRig!.root;
+
+    if (zombie.isDead) {
+      zombie.deathTimer += delta;
+      if (zombie.deathTimer < 1.8) {
+        // Heavy collapse: pitch forward and settle into the ground
+        root.rotation.x = THREE.MathUtils.lerp(root.rotation.x, -Math.PI / 2.15, delta * 3.4);
+        root.position.y = Math.max(-0.12, root.position.y - delta * 0.55);
+      }
+      if (zombie.weakpointMesh) {
+        zombie.weakpointMesh.visible = false;
+      }
+      return;
     }
+
+    const t = (zombie.animTime += delta);
+
+    // Shamble: lumbering sway, forward hunch when charging, ground-thumping bob
+    const charging = zombie.state === 'CHASE' || zombie.state === 'ATTACK';
+    root.rotation.z = Math.sin(t * 1.4) * 0.05;
+    root.rotation.x = charging ? 0.12 + Math.sin(t * 2.6) * 0.03 : Math.sin(t * 0.8) * 0.02;
+    root.position.y = Math.abs(Math.sin(t * 2.2)) * 0.07;
+
+    // Stagger flinch: sharp recoil
+    if (zombie.state === 'STAGGER') {
+      root.rotation.x = -0.22;
+    }
+
+    // Pulsing weakpoint beacon
+    if (zombie.weakpointMesh) {
+      const pulse = 1.0 + Math.sin(t * 6) * 0.25;
+      zombie.weakpointMesh.scale.setScalar(pulse);
+    }
+  }
+
+  /**
+   * Swap a procedural-fallback zombie over to the skinned GLTF rig once the
+   * model has finished loading — mirrors AllySoldier's procedural-upgrade
+   * path. The world transform, AI state and hitbox array are preserved; only
+   * the visual rig and hitbox meshes are replaced. Returns false when the
+   * zombie already has a skinned/sculpted rig or the model isn't ready.
+   */
+  public static upgradeZombieToGltf(zombie: ZombieInstance): boolean {
+    if (zombie.gltfRig || zombie.staticRig || zombie.isDead) return false;
+    const built = GltfZombieFactory.createRig(zombie.id, zombie.config);
+    if (!built) return false;
+
+    const root = zombie.mesh;
+    for (const child of [...root.children]) root.remove(child);
+    root.add(built.rig.root);
+    for (const hb of built.hitboxMeshes) root.add(hb);
+
+    zombie.hitboxMeshes.length = 0;
+    zombie.hitboxMeshes.push(...built.hitboxMeshes);
+    zombie.gltfRig = built.rig;
+    zombie.headMesh = built.headMesh;
+    zombie.weakpointMesh = built.rig.weakpointMesh;
+    return true;
+  }
+
+  /** Fatal headshot: remove the head from the rig (procedural hide / bone collapse). */
+  public static applyDecapitation(zombie: ZombieInstance) {    if (zombie.gltfRig) {
+      if (zombie.gltfRig.headBone) {
+        zombie.gltfRig.headBone.scale.setScalar(0.001);
+      }
+    } else {
+      zombie.head.visible = false;
+    }
+  }
+
+  /** Limb-shot dismemberment: hide one arm on either rig type. */
+  public static applyDismemberArm(zombie: ZombieInstance) {
+    this.applyDismemberLimb(zombie, Math.random() < 0.5 ? 'ARM_L' : 'ARM_R');
+  }
+
+  /**
+   * Location-specific dismemberment: sever the exact limb the bullet struck,
+   * on both GLTF rigs (bone-chain collapse) and procedural zombies (group
+   * hide). Returns false when the limb was already gone so callers can skip
+   * the duplicate gore burst.
+   */
+  public static applyDismemberLimb(
+    zombie: ZombieInstance,
+    limb: 'ARM_L' | 'ARM_R' | 'LEG_L' | 'LEG_R'
+  ): boolean {
+    if (zombie.gltfRig) {
+      return GltfZombieFactory.collapseLimb(zombie.gltfRig, limb);
+    }
+    if (zombie.staticRig) return false; // sculpted boss has no removable limbs
+    const group =
+      limb === 'ARM_L' ? zombie.leftArm
+      : limb === 'ARM_R' ? zombie.rightArm
+      : limb === 'LEG_L' ? zombie.leftLeg
+      : zombie.rightLeg;
+    if (!group || !group.visible) return false;
+    group.visible = false;
+    return true;
   }
 }

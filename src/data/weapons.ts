@@ -104,6 +104,59 @@ export const WEAPON_DEFINITIONS: Record<WeaponTypeKey, WeaponConfig> = {
     unlockedByDefault: false,
     description: 'Heavy anti-materiel precision rifle. One shot reliably decapitates any standard infected from safe distance.',
   },
+  rocket: {
+    id: 'rocket',
+    name: 'HAVOC RPG-X',
+    category: 'Launcher',
+    baseDamage: 550, // direct impact + radial blast (9m AoE)
+    fireRateRpm: 38,
+    baseMagSize: 1,
+    maxReserveAmmo: 12,
+    baseReloadTime: 2.4,
+    spread: 0.008,
+    recoil: 0.34,
+    headshotMultiplier: 1.0,
+    range: 110,
+    cost: 3500,
+    unlockedByDefault: false,
+    description: 'Shoulder-fired high-explosive rocket. Detonates on impact with a 9-meter kinetic fireball that liquefies entire hordes. Mind the backblast.',
+    projectile: true,
+  },
+  katana: {
+    id: 'katana',
+    name: 'ONI KATANA',
+    category: 'Melee',
+    baseDamage: 170,
+    fireRateRpm: 110,
+    baseMagSize: 1,
+    maxReserveAmmo: 0,
+    baseReloadTime: 0,
+    spread: 0,
+    recoil: 0.06,
+    headshotMultiplier: 1.0,
+    range: 3.1,
+    cost: 1200,
+    unlockedByDefault: false,
+    description: 'Folded-steel field katana. Silent wide-arcing cleave that bisects everything in a 3-meter fan — no ammo, no muzzle flash, no noise to wake the horde.',
+    melee: true,
+  },
+  airstrike: {
+    id: 'airstrike',
+    name: 'ORDINANCE TABLET',
+    category: 'Tactical',
+    baseDamage: 800, // massive AoE damage
+    fireRateRpm: 4, // ~15s between strikes (cooldown)
+    baseMagSize: 1,
+    maxReserveAmmo: 4, // 4 strike charges
+    baseReloadTime: 0, // no reload, uses charges
+    spread: 0,
+    recoil: 0,
+    headshotMultiplier: 1.0,
+    range: 120, // targeting range
+    cost: 5000,
+    unlockedByDefault: false,
+    description: 'Satellite-linked ordinance designator. Requires active Sentry Turret uplink for target validation. Calls down a precision kinetic strike that annihilates everything in a 15m radius. 4 charges per deployment.',
+  },
 };
 
 export const UPGRADE_TIERS = {

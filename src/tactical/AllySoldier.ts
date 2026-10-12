@@ -1,9 +1,12 @@
 import * as THREE from 'three';
 import { soundFx } from '../audio/SoundEffects';
 import { ParticleSystem } from '../effects/ParticleSystem';
+import { GunEffects } from '../effects/GunEffects';
 import { ZombieManager } from '../zombies/ZombieManager';
 import { ZombieInstance } from '../models/ZombieModel';
 import { ProceduralTextures } from '../textures/ProceduralTextures';
+import { NavCollision } from '../core/NavCollision';
+import { AllyModelFactory, AllyRig } from '../models/AllyModel';
 import { AllyOrder } from '../types';
 
 export interface AllyStatus {
@@ -136,9 +139,9 @@ interface AllyEntity {
   kills: number;
   mesh: THREE.Group;
   rifleGroup: THREE.Group;
-  headGroup: THREE.Group;
-  leftLeg: THREE.Group;
-  rightLeg: THREE.Group;
+  headGroup: THREE.Group | null;
+  leftLeg: THREE.Group | null;
+  rightLeg: THREE.Group | null;
   healthBarGroup?: THREE.Group;
   healthBarFill?: THREE.Mesh;
   walkCycle: number;
@@ -146,11 +149,26 @@ interface AllyEntity {
   burstCount: number;
   burstDelay: number;
   currentTarget: ZombieInstance | null;
+  // Anti-stuck navigation: detect grinding into a wall/box and detour around it
+  prevX: number;
+  prevZ: number;
+  stuckTimer: number;
+  avoidSign: number;
+  stuckCount: number;
+  // Skinned character rig (null when using the procedural fallback soldier)
+  rig: AllyRig | null;
+  gunGroup: THREE.Group | null;
+  gunMuzzleDist: number;
+  // Debug telemetry (read via __dzGame.allySquad)
+  dbgMoved?: number;
+  dbgDelta?: number;
 }
 
 export class AllySoldier {
   private static scene: THREE.Scene | null = null;
   public static squad: AllyEntity[] = [];
+  /** Frame counter for distance-driven LOD on far squad members (alternates which rigs update). */
+  public static lodFrame = 0;
 
   // Legacy single-soldier compatibility getters
   public static get isAlive(): boolean {
@@ -207,6 +225,13 @@ export class AllySoldier {
     this.scene = scene;
     this.clear();
 
+    // Kick the character GLB stream if it has not landed yet — members built
+    // before it arrives fall back to the procedural soldier, then upgrade in
+    // place the moment the model is ready (no box dummies in any mission).
+    AllyModelFactory.preload().then(() => {
+      this.upgradeSquadToRigs();
+    });
+
     const actualCount = Math.max(1, Math.min(5, count));
     this.radioMessage = `Tactical Fireteam deployed: ${actualCount} combat specialists escorting Commander.`;
     this.radioTimer = 5.0;
@@ -219,6 +244,187 @@ export class AllySoldier {
   }
 
   private static buildSoldierMesh(scene: THREE.Scene, spawnPos: THREE.Vector3, profile: AllyProfile): AllyEntity {
+    // Prefer the skinned character rig; fall back to the procedural soldier
+    // while the GLB is still streaming (or if it failed to load).
+    const rig = AllyModelFactory.createRig(profile.id);
+    if (rig) {
+      return this.buildGltfSoldierMesh(scene, spawnPos, profile, rig);
+    }
+    return this.buildProceduralSoldierMesh(scene, spawnPos, profile);
+  }
+
+  /**
+   * Spiral-search outward from a pinned position for the closest point that
+   * is not inside any building collider. Returns null when nothing open is
+   * found within maxRadius (caller keeps the soldier where they are).
+   */
+  private static nearestOpenSpot(from: THREE.Vector3, maxRadius: number): THREE.Vector3 | null {
+    for (let ring = 1; ring <= 5; ring++) {
+      const r = (maxRadius / 5) * ring;
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2 + ring * 0.4;
+        const x = from.x + Math.sin(ang) * r;
+        const z = from.z + Math.cos(ang) * r;
+        if (!NavCollision.isBlocked(x, z, 0.6)) {
+          return new THREE.Vector3(x, 0, z);
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Replace any procedural box soldiers with skinned Winter Soldier rigs,
+   * preserving each member's position, facing and health bar.
+   */
+  private static upgradeSquadToRigs() {
+    for (const soldier of this.squad) {
+      if (soldier.rig || !this.scene) continue;
+      const rig = AllyModelFactory.createRig(soldier.profile.id);
+      if (!rig) return; // still not ready — the next init will retry
+
+      const oldMesh = soldier.mesh;
+      const pos = oldMesh.position.clone();
+      const rotY = oldMesh.rotation.y;
+
+      const root = new THREE.Group();
+      root.name = `tactical_ally_${soldier.profile.id}`;
+      root.position.copy(pos);
+      root.rotation.y = rotY;
+      root.add(rig.root);
+
+      const rifle = this.buildRifleMesh(soldier.profile);
+      const socket = rig.weaponSocketL || rig.handL;
+      if (socket) socket.add(rifle.group);
+      AllyModelFactory.applyStance(rig);
+      root.updateMatrixWorld(true);
+      AllyModelFactory.orientRifleToForward(rig, rifle.group);
+
+      const healthBar = this.buildHealthBar();
+      root.add(healthBar.group);
+      this.scene.add(root);
+      this.scene.remove(oldMesh);
+
+      soldier.mesh = root;
+      soldier.rifleGroup = rifle.group;
+      soldier.headGroup = null;
+      soldier.leftLeg = null;
+      soldier.rightLeg = null;
+      soldier.healthBarGroup = healthBar.group;
+      soldier.healthBarFill = healthBar.fill;
+      soldier.rig = rig;
+      soldier.gunGroup = socket ? rifle.group : null;
+      soldier.gunMuzzleDist = rifle.muzzleDist;
+      soldier.prevX = root.position.x;
+      soldier.prevZ = root.position.z;
+    }
+  }
+
+  /** Shared profile-specific rifle (recoil body + barrel + laser sight). */  private static buildRifleMesh(profile: AllyProfile): { group: THREE.Group; muzzleDist: number } {
+    const darkGearMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.6, metalness: 0.3 });
+
+    const rifleGroup = new THREE.Group();
+
+    const recGeo = new THREE.BoxGeometry(0.06, 0.12, 0.45);
+    const rifleMesh = new THREE.Mesh(recGeo, darkGearMat);
+    rifleGroup.add(rifleMesh);
+
+    const barrelLength = profile.weaponType === 'sniper' ? 0.6 : profile.weaponType === 'heavy' ? 0.5 : 0.38;
+    const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, barrelLength, 6);
+    barrelGeo.rotateX(Math.PI / 2);
+    const barrel = new THREE.Mesh(barrelGeo, darkGearMat);
+    barrel.position.set(0, 0.02, barrelLength);
+    rifleGroup.add(barrel);
+
+    // Tactical Laser Sight
+    const laserColor = profile.weaponType === 'sniper' ? 0x3b82f6 : 0xef4444;
+    const laserMat = new THREE.LineBasicMaterial({ color: laserColor, transparent: true, opacity: 0.65 });
+    const laserGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0.03, 0.02, 0.3),
+      new THREE.Vector3(0.03, 0.02, 16),
+    ]);
+    const laser = new THREE.Line(laserGeo, laserMat);
+    rifleGroup.add(laser);
+
+    return { group: rifleGroup, muzzleDist: barrelLength + 0.4 };
+  }
+
+  /** Floating 3D overhead health bar billboard. */
+  private static buildHealthBar(): { group: THREE.Group; fill: THREE.Mesh } {
+    const healthBarGroup = new THREE.Group();
+    healthBarGroup.position.set(0, 1.95, 0);
+
+    const bgBarGeo = new THREE.PlaneGeometry(0.72, 0.08);
+    const bgBarMat = new THREE.MeshBasicMaterial({ color: 0x09090b, side: THREE.DoubleSide });
+    const bgBar = new THREE.Mesh(bgBarGeo, bgBarMat);
+    healthBarGroup.add(bgBar);
+
+    const fillBarGeo = new THREE.PlaneGeometry(0.68, 0.06);
+    fillBarGeo.translate(0.34, 0, 0); // Origin at left edge
+    const fillBarMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, side: THREE.DoubleSide });
+    const fillBar = new THREE.Mesh(fillBarGeo, fillBarMat);
+    fillBar.position.set(-0.34, 0, 0.005);
+    healthBarGroup.add(fillBar);
+
+    return { group: healthBarGroup, fill: fillBar };
+  }
+
+  /** Skinned character rig squad member (Winter Soldier GLB). */
+  private static buildGltfSoldierMesh(scene: THREE.Scene, spawnPos: THREE.Vector3, profile: AllyProfile, rig: AllyRig): AllyEntity {
+    const root = new THREE.Group();
+    root.name = `tactical_ally_${profile.id}`;
+    root.position.set(spawnPos.x + profile.offsetX, 0, spawnPos.z + profile.offsetZ);
+
+    root.add(rig.root);
+
+    // Profile weapon mounted on the character's hand weapon-socket
+    const rifle = this.buildRifleMesh(profile);
+    const socket = rig.weaponSocketL || rig.handL;
+    if (socket) {
+      socket.add(rifle.group);
+    }
+
+    // Apply the stance first, then compute the rifle's local rotation so the
+    // barrel points along the character's forward regardless of hand-bone axes
+    AllyModelFactory.applyStance(rig);
+    root.updateMatrixWorld(true);
+    AllyModelFactory.orientRifleToForward(rig, rifle.group);
+
+    const healthBar = this.buildHealthBar();
+    root.add(healthBar.group);
+    scene.add(root);
+
+    return {
+      profile,
+      hp: profile.maxHp,
+      maxHp: profile.maxHp,
+      isAlive: true,
+      kills: 0,
+      mesh: root,
+      rifleGroup: rifle.group,
+      headGroup: null,
+      leftLeg: null,
+      rightLeg: null,
+      healthBarGroup: healthBar.group,
+      healthBarFill: healthBar.fill,
+      walkCycle: Math.random() * Math.PI * 2,
+      fireCooldown: Math.random() * 0.5,
+      burstCount: 0,
+      burstDelay: 0,
+      currentTarget: null,
+      prevX: root.position.x,
+      prevZ: root.position.z,
+      stuckTimer: 0,
+
+      avoidSign: Math.random() < 0.5 ? -1 : 1,
+      stuckCount: 0,
+      rig,
+      gunGroup: socket ? rifle.group : null,
+      gunMuzzleDist: rifle.muzzleDist,
+    };
+  }
+
+  private static buildProceduralSoldierMesh(scene: THREE.Scene, spawnPos: THREE.Vector3, profile: AllyProfile): AllyEntity {
     const root = new THREE.Group();
     root.name = `tactical_ally_${profile.id}`;
     root.position.set(spawnPos.x + profile.offsetX, 0, spawnPos.z + profile.offsetZ);
@@ -302,31 +508,9 @@ export class AllySoldier {
 
     torsoGroup.add(headGroup);
 
-    // Weapon Group
-    const rifleGroup = new THREE.Group();
+    // Weapon Group (shared rifle builder)
+    const { group: rifleGroup } = this.buildRifleMesh(profile);
     rifleGroup.position.set(0.22, 0.1, 0.35);
-
-    const recGeo = new THREE.BoxGeometry(0.06, 0.12, 0.45);
-    const rifleMesh = new THREE.Mesh(recGeo, darkGearMat);
-    rifleGroup.add(rifleMesh);
-
-    const barrelLength = profile.weaponType === 'sniper' ? 0.6 : profile.weaponType === 'heavy' ? 0.5 : 0.38;
-    const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, barrelLength, 6);
-    barrelGeo.rotateX(Math.PI / 2);
-    const barrel = new THREE.Mesh(barrelGeo, darkGearMat);
-    barrel.position.set(0, 0.02, barrelLength);
-    rifleGroup.add(barrel);
-
-    // Tactical Laser Sight
-    const laserColor = profile.weaponType === 'sniper' ? 0x3b82f6 : 0xef4444;
-    const laserMat = new THREE.LineBasicMaterial({ color: laserColor, transparent: true, opacity: 0.65 });
-    const laserGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0.03, 0.02, 0.3),
-      new THREE.Vector3(0.03, 0.02, 16),
-    ]);
-    const laser = new THREE.Line(laserGeo, laserMat);
-    rifleGroup.add(laser);
-
     torsoGroup.add(rifleGroup);
 
     // Legs
@@ -347,23 +531,10 @@ export class AllySoldier {
 
     root.add(torsoGroup);
 
-    // Floating 3D Overhead Health Bar Billboard
-    const healthBarGroup = new THREE.Group();
-    healthBarGroup.position.set(0, 1.95, 0);
+    // Floating 3D Overhead Health Bar Billboard (shared builder)
+    const healthBar = this.buildHealthBar();
 
-    const bgBarGeo = new THREE.PlaneGeometry(0.72, 0.08);
-    const bgBarMat = new THREE.MeshBasicMaterial({ color: 0x09090b, side: THREE.DoubleSide });
-    const bgBar = new THREE.Mesh(bgBarGeo, bgBarMat);
-    healthBarGroup.add(bgBar);
-
-    const fillBarGeo = new THREE.PlaneGeometry(0.68, 0.06);
-    fillBarGeo.translate(0.34, 0, 0); // Origin at left edge
-    const fillBarMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, side: THREE.DoubleSide });
-    const fillBar = new THREE.Mesh(fillBarGeo, fillBarMat);
-    fillBar.position.set(-0.34, 0, 0.005);
-    healthBarGroup.add(fillBar);
-
-    root.add(healthBarGroup);
+    root.add(healthBar.group);
     scene.add(root);
 
     return {
@@ -377,13 +548,22 @@ export class AllySoldier {
       headGroup,
       leftLeg,
       rightLeg,
-      healthBarGroup,
-      healthBarFill: fillBar,
+      healthBarGroup: healthBar.group,
+      healthBarFill: healthBar.fill,
       walkCycle: Math.random() * Math.PI * 2,
       fireCooldown: Math.random() * 0.5,
       burstCount: 0,
       burstDelay: 0,
       currentTarget: null,
+      prevX: root.position.x,
+      prevZ: root.position.z,
+      stuckTimer: 0,
+
+      avoidSign: Math.random() < 0.5 ? -1 : 1,
+      stuckCount: 0,
+      rig: null,
+      gunGroup: null,
+      gunMuzzleDist: 0.8,
     };
   }
 
@@ -399,6 +579,7 @@ export class AllySoldier {
   public static update(
     delta: number,
     playerPos: THREE.Vector3,
+    playerYaw: number,
     zombieManager: ZombieManager,
     onKill: (zombie: any, isHeadshot: boolean) => void
   ) {
@@ -410,6 +591,10 @@ export class AllySoldier {
         this.radioMessage = '';
       }
     }
+
+    // Frame counter for distance-driven LOD (alternates which far rigs update)
+    this.lodFrame++;
+    let soldierLodIdx = 0;
 
     for (const soldier of this.squad) {
       if (!soldier.isAlive || !soldier.mesh) continue;
@@ -483,12 +668,18 @@ export class AllySoldier {
             targetWorldPos = soldier.mesh.position.clone();
           }
         } else {
-          // No current zombie: advance forward into the map scouting
-          targetWorldPos = new THREE.Vector3(
-            playerPos.x + soldier.profile.offsetX * 2.2,
-            0,
-            playerPos.z + 22.0 + soldier.profile.offsetZ * 2.0
-          );
+          // No current zombie: advance in the direction the operator is
+          // FACING (not a fixed world axis) — validate the rally point so
+          // the squad never grinds against a building's walls forever.
+          const fwdX = -Math.sin(playerYaw);
+          const fwdZ = -Math.cos(playerYaw);
+          let rallyX = playerPos.x + fwdX * 16.0 + soldier.profile.offsetX * 1.5;
+          let rallyZ = playerPos.z + fwdZ * 16.0 + soldier.profile.offsetZ * 1.5;
+          if (NavCollision.isBlocked(rallyX, rallyZ, 1.0)) {
+            rallyX = playerPos.x + soldier.profile.offsetX;
+            rallyZ = playerPos.z + soldier.profile.offsetZ;
+          }
+          targetWorldPos = new THREE.Vector3(rallyX, 0, rallyZ);
         }
       } else {
         // "Follow-Me" command: each soldier maintains assigned escort offset relative to player
@@ -505,19 +696,85 @@ export class AllySoldier {
 
       let isWalking = false;
 
+      // Actual displacement last frame — drives both anti-stuck detection
+      // and the walk-gait cadence (feet planted at true ground speed)
+      const moved = Math.hypot(
+        soldier.mesh.position.x - soldier.prevX,
+        soldier.mesh.position.z - soldier.prevZ
+      );
+
       if (distToSlot > 0.8) {
         isWalking = true;
         toSlot.normalize();
+
         const maxSprint = this.currentOrder === 'SEARCH_AND_DESTROY' ? 7.5 : 6.8;
         const speed = distToSlot > 6 ? maxSprint : distToSlot > 3 ? 5.2 : 3.4;
+
+        // Stuck watch: if the soldier makes almost no progress for a while
+        // while a distant slot is calling, flip the slide side; if flipping
+        // keeps failing they are wedged inside geometry — snap them free.
+        if (distToSlot > 1.6 && moved < speed * delta * 0.3) {
+          soldier.stuckTimer += delta;
+          if (soldier.stuckTimer > 0.6) {
+            soldier.avoidSign *= -1;
+            soldier.stuckTimer = 0.25;
+            soldier.stuckCount++;
+            if (soldier.stuckCount >= 3) {
+              const open = this.nearestOpenSpot(soldier.mesh.position, 3.5);
+              if (open) {
+                soldier.mesh.position.copy(open);
+              }
+              soldier.stuckCount = 0;
+              soldier.stuckTimer = 0;
+            }
+          }
+        } else {
+          soldier.stuckTimer = Math.max(0, soldier.stuckTimer - delta * 3);
+          if (moved > speed * delta * 0.5) {
+            soldier.stuckCount = 0; // free movement — path is clear again
+          }
+        }
+
+        // Straight pursuit toward the slot. ONLY when a wall actually blocks
+        // the step does the soldier shuffle sideways along it (left/right),
+        // and the slide stops the moment the path clears itself. While
+        // sliding, they face the real movement direction so the stride
+        // matches the motion instead of skating sideways.
         soldier.mesh.position.addScaledVector(toSlot, speed * delta);
 
-        const targetAngle = Math.atan2(toSlot.x, toSlot.z);
+        let facing = toSlot;
+        const blocked = NavCollision.resolve(soldier.mesh.position, 0.42, 1.8);
+        if (blocked) {
+          const side = new THREE.Vector3(-toSlot.z, 0, toSlot.x);
+          soldier.mesh.position.addScaledVector(side, soldier.avoidSign * speed * 0.6 * delta);
+          NavCollision.resolve(soldier.mesh.position, 0.42, 1.8);
+          facing = new THREE.Vector3(
+            toSlot.x + side.x * soldier.avoidSign * 0.6,
+            0,
+            toSlot.z + side.z * soldier.avoidSign * 0.6
+          ).normalize();
+        }
+
+        const targetAngle = Math.atan2(facing.x, facing.z);
         soldier.mesh.rotation.y = THREE.MathUtils.lerp(soldier.mesh.rotation.y, targetAngle, delta * 6);
       }
 
-      // Leg walk cycle animation
-      if (isWalking && soldier.leftLeg && soldier.rightLeg) {
+      soldier.prevX = soldier.mesh.position.x;
+      soldier.prevZ = soldier.mesh.position.z;
+
+      // Leg locomotion: speed-synced planted-foot gait with leg IK.
+      // Squad members beyond 45m animate at half rate (596-bone rigs are the
+      // heaviest skinning in the scene) — their poses still interpolate fine.
+      if (soldier.rig) {
+        const distToPlayer = soldier.mesh.position.distanceTo(playerPos);
+        const rigLod = distToPlayer > 45;
+        soldierLodIdx++;
+        if (rigLod && (this.lodFrame + soldierLodIdx) % 2 !== 0) {
+          continue;
+        }
+        const moveSpeed = delta > 0 ? Math.min(8, moved / delta) : 0;
+        AllyModelFactory.updateGait(soldier.rig, rigLod ? delta * 2 : delta, moveSpeed);
+      } else if (isWalking && soldier.leftLeg && soldier.rightLeg) {
         soldier.walkCycle += delta * 12;
         soldier.leftLeg.rotation.x = Math.sin(soldier.walkCycle) * 0.45;
         soldier.rightLeg.rotation.x = -Math.sin(soldier.walkCycle) * 0.45;
@@ -550,10 +807,16 @@ export class AllySoldier {
                 soundFx.playRifleShot();
               }
 
-              // Muzzle flash & sparks
-              const muzzlePos = new THREE.Vector3(0.22, 1.1, 0.85);
-              soldier.mesh.localToWorld(muzzlePos);
+              // Muzzle flash & sparks (from the actual barrel when skinned)
+              const muzzlePos = soldier.gunGroup
+                ? soldier.gunGroup.localToWorld(new THREE.Vector3(0, 0.02, soldier.gunMuzzleDist))
+                : soldier.mesh.localToWorld(new THREE.Vector3(0.22, 1.1, 0.85));
               ParticleSystem.spawnSparks(muzzlePos, new THREE.Vector3(0, 1, 0));
+
+              const targetChest = target.mesh.position.clone().add(new THREE.Vector3(0, 1.1, 0));
+              const aimDir = new THREE.Vector3().subVectors(targetChest, muzzlePos).normalize();
+              GunEffects.spawnMuzzleFlash(muzzlePos, aimDir, 0.7);
+              GunEffects.spawnTracer(muzzlePos, targetChest, 0.85);
 
               // Calculate damage
               const isHead = Math.random() < soldier.profile.headshotRate;

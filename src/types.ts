@@ -1,12 +1,11 @@
-export type GameScreen = 'MENU' | 'CUTSCENE' | 'PLAYING' | 'PAUSED' | 'ARSENAL' | 'MISSIONS' | 'SETTINGS' | 'VICTORY' | 'DEFEAT' | 'SPECIMEN' | 'MISSION10_ENDING';
+export type GameScreen = 'COMPANY_INTRO' | 'MENU' | 'CUTSCENE' | 'PLAYING' | 'PAUSED' | 'ARSENAL' | 'MISSIONS' | 'SETTINGS' | 'VICTORY' | 'DEFEAT' | 'SPECIMEN' | 'MISSION10_ENDING';
 
 export type Difficulty = 'EASY' | 'NORMAL' | 'HARD' | 'VERY HARD' | 'NIGHTMARE';
 
 export type ZombieTypeKey = 'walker' | 'runner' | 'brute' | 'spitter' | 'crawler' | 'screamer' | 'bloater' | 'stalker' | 'enforcer' | 'colossus';
-
 export type ZombieState = 'IDLE' | 'WANDER' | 'ALERT' | 'CHASE' | 'ATTACK' | 'STAGGER' | 'DEAD';
 
-export type WeaponTypeKey = 'pistol' | 'shotgun' | 'rifle' | 'smg' | 'heavy' | 'sniper';
+export type WeaponTypeKey = 'pistol' | 'shotgun' | 'rifle' | 'smg' | 'heavy' | 'sniper' | 'rocket' | 'katana' | 'airstrike';
 
 export interface WeaponUpgradeLevel {
   damageLevel: number;
@@ -32,6 +31,8 @@ export interface WeaponConfig {
   cost: number;
   unlockedByDefault: boolean;
   description: string;
+  melee?: boolean;      // katana: infinite ammo, wide arc swing instead of hitscan
+  projectile?: boolean; // rocket: launches an explosive projectile instead of hitscan
 }
 
 export interface ZombieConfig {
@@ -57,7 +58,7 @@ export interface ObjectiveStep {
   id: string;
   title: string;
   description: string;
-  type: 'reach_zone' | 'kill_count' | 'interact_object' | 'survive_time' | 'defeat_boss';
+  type: 'reach_zone' | 'kill_count' | 'interact_object' | 'survive_time' | 'defeat_boss' | 'rescue_survivors' | 'collect_samples';
   targetCount?: number;
   currentCount?: number;
   targetPosition?: [number, number, number];
@@ -119,6 +120,7 @@ export interface PlayerSaveData {
   highestMissionUnlocked: number;
   grenades: number;
   turrets: number;
+  airstrikes: number;
   hasAllyRecruit: boolean;
   allyCount: number;
   isAllyDeployed?: boolean;
@@ -146,6 +148,8 @@ export interface GameSettings {
 export interface HitResult {
   hit: boolean;
   zone: 'HEAD' | 'TORSO' | 'LIMB' | 'WEAKPOINT' | 'BARREL' | 'NONE';
+  /** Which limb the bullet struck — drives location-specific dismemberment. */
+  limb?: 'ARM_L' | 'ARM_R' | 'LEG_L' | 'LEG_R';
   damage: number;
   isFatal: boolean;
   targetId?: string;

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ProceduralTextures } from '../../textures/ProceduralTextures';
-import { EnvironmentResult, InteractiveObject } from '../EnvironmentBuilder';
+import { EnvironmentResult, createHurdleField, InteractiveObject } from '../EnvironmentBuilder';
 
 export class FreightDepotMap {
   public static build(): EnvironmentResult {
@@ -43,7 +43,7 @@ export class FreightDepotMap {
     });
 
     // 1. Asphalt / Concrete Yard Ground (expanded 170m x 230m)
-    const groundGeo = new THREE.PlaneGeometry(170, 230);
+    const groundGeo = new THREE.PlaneGeometry(240, 320);
     groundGeo.rotateX(-Math.PI / 2);
     const groundMesh = new THREE.Mesh(groundGeo, groundMat);
     groundMesh.receiveShadow = true;
@@ -51,10 +51,10 @@ export class FreightDepotMap {
 
     // Perimeter Warehouse Walls
     const wallConfigs = [
-      { x: -70, z: 0, w: 2, h: 12, d: 220 }, // West wall
-      { x: 70, z: 0, w: 2, h: 12, d: 220 },  // East wall
-      { x: 0, z: -105, w: 142, h: 12, d: 2 },  // North wall
-      { x: 0, z: 105, w: 142, h: 12, d: 2 },   // South wall
+      { x: -110, z: 0, w: 2, h: 12, d: 300 }, // West wall
+      { x: 110, z: 0, w: 2, h: 12, d: 300 },  // East wall
+      { x: 0, z: -148, w: 224, h: 12, d: 2 },  // North wall
+      { x: 0, z: 148, w: 224, h: 12, d: 2 },   // South wall
     ];
 
     for (const wc of wallConfigs) {
@@ -298,11 +298,22 @@ export class FreightDepotMap {
       colliderBoxes.push(bbox);
     }
 
+
+    // ==========================================
+    // HURDLE FIELDS — scattered cover across the expanded arena
+    // ==========================================
+    const keepOut = [{"x":-18,"z":8,"r":7},{"x":14,"z":12,"r":7},{"x":22,"z":31,"r":8},{"x":-2,"z":-10,"r":8},{"x":-24,"z":-35,"r":9}];
+    createHurdleField(root, colliderBoxes, { minX: -92, maxX: -26, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 601 });
+    createHurdleField(root, colliderBoxes, { minX: 26, maxX: 92, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 602 });
+    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: -138, maxZ: -92, keepOut, count: 10, seed: 603 });
+    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: 62, maxZ: 136, keepOut, count: 10, seed: 604 });
+
     return {
       sceneGroup: root,
       colliderBoxes,
       interactiveObjects,
       explosiveBarrels,
+      bounds: { minX: -105, maxX: 105, minZ: -143, maxZ: 143 },
       safehouseZone: {
         position: new THREE.Vector3(22, 0, 31),
         radius: 5.0,
@@ -346,7 +357,7 @@ export class FreightDepotMap {
       fogColor: 0x0c1a10, // Eerie toxic green biohazard fog
       fogDensity: 0.028,
       ambientColor: 0x164e2f,
-      ambientIntensity: 0.95,
+      ambientIntensity: 0.75,
       directionalColor: 0x86efac,
       directionalIntensity: 1.6,
       directionalPos: [20, 50, 20],

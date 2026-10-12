@@ -3,6 +3,7 @@ import { soundFx } from '../audio/SoundEffects';
 import { ParticleSystem } from '../effects/ParticleSystem';
 import { ZombieManager } from '../zombies/ZombieManager';
 import { SaveManager } from '../core/SaveManager';
+import { NavCollision } from '../core/NavCollision';
 import { HitResult } from '../types';
 
 export interface DroneStatus {
@@ -26,7 +27,7 @@ export interface ActiveDroneRocket {
   speed: number;
   life: number;
   maxLife: number;
-  exhaustLight: THREE.PointLight;
+  exhaustLight?: THREE.PointLight;
 }
 
 export class DroneManager {
@@ -54,6 +55,8 @@ export class DroneManager {
   private static raycaster: THREE.Raycaster = new THREE.Raycaster();
   private static podToggle: boolean = false;
   private static activeRockets: ActiveDroneRocket[] = [];
+  // Pooled thruster lights: runtime light creation forces full shader recompiles
+  private static lightPool: THREE.PointLight[] = [];
 
   public static hullHp: number = 100;
   public static readonly MAX_HULL_HP: number = 100;
@@ -63,6 +66,15 @@ export class DroneManager {
   public static init(scene: THREE.Scene) {
     this.scene = scene;
     this.rotors = [];
+
+    if (!this.lightPool.length) {
+      for (let i = 0; i < 4; i++) {
+        const light = new THREE.PointLight(0xff7700, 0, 7.0);
+        light.visible = false;
+        scene.add(light);
+        this.lightPool.push(light);
+      }
+    }
 
     if (this.droneGroup) {
       scene.remove(this.droneGroup);
@@ -425,6 +437,9 @@ export class DroneManager {
       this.position.z = playerPos.z + Math.sin(angle) * 160.0;
     }
 
+    // 3D building collision: the drone banks off rooftops instead of clipping
+    NavCollision.resolveFlying(this.position, 0.7);
+
     // Dynamic Banking Roll/Pitch for realistic flight physics
     const roll = this.velocity.dot(rightVec) * 0.035;
     const flightPitch = this.velocity.dot(forwardVec) * 0.03;
@@ -561,10 +576,14 @@ export class DroneManager {
     exhaustMesh.position.set(0, 0, -0.28);
     rocket.add(exhaustMesh);
 
-    // Dynamic Thruster Point Light
-    const thrusterLight = new THREE.PointLight(0xff7700, 3.5, 7.0);
-    thrusterLight.position.set(0, 0, -0.32);
-    rocket.add(thrusterLight);
+    // Dynamic Thruster Point Light (pooled — no runtime light creation)
+    const thrusterLight = this.lightPool.find((l) => !l.visible);
+    if (thrusterLight) {
+      thrusterLight.position.set(0, 0, -0.32);
+      thrusterLight.visible = true;
+      thrusterLight.intensity = 3.5;
+      rocket.add(thrusterLight);
+    }
 
     // Orient rocket along launch trajectory
     rocket.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), fireDir);
@@ -611,7 +630,9 @@ export class DroneManager {
       ParticleSystem.spawnSparks(exhaustPos, r.direction.clone().negate());
 
       // Flicker exhaust light
-      r.exhaustLight.intensity = 2.8 + Math.random() * 1.5;
+      if (r.exhaustLight) {
+        r.exhaustLight.intensity = 2.8 + Math.random() * 1.5;
+      }
 
       // Collision checks:
       // 1. Direct hit with any active zombie
@@ -640,6 +661,12 @@ export class DroneManager {
 
         this.detonateRocket(impactPos, zombieManager, onKill, onScreenShake, camera);
 
+        // Return pooled thruster light before removing the rocket
+        if (r.exhaustLight && this.scene) {
+          this.scene.add(r.exhaustLight);
+          r.exhaustLight.visible = false;
+          r.exhaustLight.intensity = 0;
+        }
         // Remove from scene & active array
         this.scene.remove(r.mesh);
         this.activeRockets.splice(i, 1);

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ProceduralTextures } from '../../textures/ProceduralTextures';
-import { EnvironmentResult, InteractiveObject } from '../EnvironmentBuilder';
+import { EnvironmentResult, createHurdleField, InteractiveObject } from '../EnvironmentBuilder';
 
 export class SubstationMap {
   public static build(): EnvironmentResult {
@@ -54,7 +54,7 @@ export class SubstationMap {
     });
 
     // 1. Concrete Substation Ground (expanded 170m x 230m)
-    const groundGeo = new THREE.PlaneGeometry(170, 230);
+    const groundGeo = new THREE.PlaneGeometry(240, 320);
     groundGeo.rotateX(-Math.PI / 2);
     const groundMesh = new THREE.Mesh(groundGeo, groundMat);
     groundMesh.position.set(0, 0, 0);
@@ -63,10 +63,10 @@ export class SubstationMap {
 
     // Perimeter Blast Walls
     const wallConfigs = [
-      { x: -70, z: 0, w: 2, h: 10, d: 220 }, // West wall
-      { x: 70, z: 0, w: 2, h: 10, d: 220 },  // East wall
-      { x: 0, z: -105, w: 142, h: 10, d: 2 },  // North wall
-      { x: 0, z: 105, w: 142, h: 10, d: 2 },   // South wall
+      { x: -110, z: 0, w: 2, h: 10, d: 300 }, // West wall
+      { x: 110, z: 0, w: 2, h: 10, d: 300 },  // East wall
+      { x: 0, z: -148, w: 224, h: 10, d: 2 },  // North wall
+      { x: 0, z: 148, w: 224, h: 10, d: 2 },   // South wall
     ];
 
     for (const wc of wallConfigs) {
@@ -304,11 +304,22 @@ export class SubstationMap {
       colliderBoxes.push(bbox);
     }
 
+
+    // ==========================================
+    // HURDLE FIELDS — scattered cover across the expanded arena
+    // ==========================================
+    const keepOut = [{"x":12,"z":8,"r":8},{"x":-14,"z":36,"r":8},{"x":0,"z":-36,"r":9}];
+    createHurdleField(root, colliderBoxes, { minX: -92, maxX: -26, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 501 });
+    createHurdleField(root, colliderBoxes, { minX: 26, maxX: 92, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 502 });
+    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: -138, maxZ: -92, keepOut, count: 10, seed: 503 });
+    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: 62, maxZ: 136, keepOut, count: 10, seed: 504 });
+
     return {
       sceneGroup: root,
       colliderBoxes,
       interactiveObjects,
       explosiveBarrels,
+      bounds: { minX: -105, maxX: 105, minZ: -143, maxZ: 143 },
       safehouseZone: {
         position: new THREE.Vector3(-14, 0, 36),
         radius: 4.8,
@@ -352,7 +363,7 @@ export class SubstationMap {
       fogColor: 0x64748b, // Afternoon rain overcast sky fog
       fogDensity: 0.015,
       ambientColor: 0x94a3b8, // Daylight overcast ambient
-      ambientIntensity: 1.05,
+      ambientIntensity: 0.82,
       directionalColor: 0xdbeafe, // Soft afternoon daylight through stormclouds
       directionalIntensity: 1.35,
       directionalPos: [30, 50, -10],

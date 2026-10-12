@@ -1,18 +1,44 @@
 import * as THREE from 'three';
 import { ZombieInstance, ZombieModelFactory } from '../models/ZombieModel';
+import { GltfZombieFactory } from '../models/GltfZombieFactory';
 import { ZombieTypeKey, HitResult, PickupItem } from '../types';
 import { ZOMBIE_DEFINITIONS } from '../data/zombies';
 import { soundFx } from '../audio/SoundEffects';
 import { ParticleSystem } from '../effects/ParticleSystem';
+import { NavCollision } from '../core/NavCollision';
 import { NarrowPathSpawn } from '../models/EnvironmentBuilder';
+
+interface CorpseRecord {
+  mesh: THREE.Group;
+  settle: number;
+  mixer: THREE.AnimationMixer | null;
+  bleedTimer: number;
+  repoolTimer: number;
+  poolSize: number;
+  sinkTimer: number;
+  sinking: boolean;
+}
 
 export class ZombieManager {
   private scene: THREE.Scene;
+  public getScene(): THREE.Scene {
+    return this.scene;
+  }
   public zombies: ZombieInstance[] = [];
   public activeZombieCount: number = 0;
   public bossInstance: ZombieInstance | null = null;
+  // Dead bodies stay on the ground bleeding out (capped, oldest sinks away)
+  private corpses: CorpseRecord[] = [];
+  private readonly MAX_CORPSES = 22;
 
   public pickups: PickupItem[] = [];
+
+  // Rolling frame counter for far-zombie LOD staggering
+  private frame: number = 0;
+
+  // Zombies currently using the procedural fallback while the custom GLTF
+  // model is still streaming — upgraded in place once the model arrives
+  private fallbackAlive = 0;
 
   // Designated urban spawn points along the street and side alleys
   private spawnPoints: THREE.Vector3[] = [
@@ -59,11 +85,30 @@ export class ZombieManager {
     return meshes;
   }
 
+  /** Swap every alive procedural-fallback zombie to the skinned GLTF rig. */
+  private upgradeFallbackZombies() {
+    let remaining = 0;
+    let upgraded = 0;
+    for (const z of this.zombies) {
+      if (z.gltfRig || z.staticRig || z.isDead) continue;
+      if (ZombieModelFactory.upgradeZombieToGltf(z)) {
+        upgraded++;
+      } else {
+        remaining++;
+      }
+    }
+    this.fallbackAlive = remaining;
+    if (upgraded > 0) {
+      console.info(`O²: upgraded ${upgraded} fallback zombie(s) to the skinned rig`);
+    }
+  }
+
   public spawnZombie(
     type: ZombieTypeKey,
     customPos?: THREE.Vector3,
     forceNarrowPath?: boolean,
-    bossOverride?: { isBoss: boolean; name: string; maxHp: number; scale?: number }
+    bossOverride?: { isBoss: boolean; name: string; maxHp: number; scale?: number },
+    huntPlayer: boolean = false
   ): ZombieInstance {
     const baseConfig = ZOMBIE_DEFINITIONS[type] || ZOMBIE_DEFINITIONS['walker'];
     const config = { ...baseConfig };
@@ -105,6 +150,12 @@ export class ZombieManager {
     zombie.attackTimer = 1.5; // Grace period on spawn
     zombie.mesh.position.copy(spawnPos);
 
+    // Fallback tracking: spawned without the skinned GLTF rig (model still
+    // streaming or failed) — the update loop upgrades them once it arrives
+    if (!zombie.gltfRig && !zombie.staticRig) {
+      this.fallbackAlive++;
+    }
+
     // Initial orientation: if emerging from narrow path, face toward the alley exit mouth
     if (isFromNarrow && narrowExit) {
       const toExit = new THREE.Vector3().subVectors(narrowExit, spawnPos).normalize();
@@ -129,7 +180,47 @@ export class ZombieManager {
       soundFx.playBossRoar();
     }
 
+    // Off-screen spawn: immediately hunt the player's current location so the
+    // horde converges on the operator instead of idling at the spawn point.
+    if (huntPlayer && zombie.state !== 'CHASE') {
+      zombie.isAlerted = true;
+      zombie.state = 'ALERT';
+      zombie.stateTimer = 0.3 + Math.random() * 0.7;
+    }
+
     return zombie;
+  }
+
+  /**
+   * Pick a spawn position OUT of the player's sight: never within 26m, and
+   * preferring points behind or beside the operator's view cone. Falls back
+   * to the farthest point when every spawn is close.
+   */
+  public pickDistantSpawnPoint(playerPos: THREE.Vector3, playerYaw: number): THREE.Vector3 {
+    const fwd = new THREE.Vector3(-Math.sin(playerYaw), 0, -Math.cos(playerYaw));
+    let best: THREE.Vector3 | null = null;
+    let bestScore = -Infinity;
+
+    for (const sp of this.spawnPoints) {
+      const d = sp.distanceTo(playerPos);
+      if (d < 26) continue; // never materialize right next to the player
+      const toSpawn = sp.clone().sub(playerPos).setY(0).normalize();
+      const facingDot = fwd.dot(toSpawn); // > 0.25 means inside the view cone
+      const score = (facingDot > 0.25 ? 0 : 40) + Math.min(d, 70) / 2;
+      if (score > bestScore) {
+        bestScore = score;
+        best = sp.clone();
+      }
+    }
+
+    if (!best) {
+      for (const sp of this.spawnPoints) {
+        if (!best || sp.distanceTo(playerPos) > best.distanceTo(playerPos)) {
+          best = sp.clone();
+        }
+      }
+    }
+    return best!;
   }
 
   // Gunshots reverberate through the district, alerting dormant zombies within auditory range with acoustic latency
@@ -199,6 +290,21 @@ export class ZombieManager {
     zombie.slowTimer = Math.max(zombie.slowTimer || 0, slowDuration);
     zombie.slowMultiplier = Math.min(zombie.slowMultiplier || 1.0, slowFactor);
 
+    // LIMB BREAKS (while still alive): every shot to a limb accumulates trauma
+    // on that specific limb — enough of it tears the limb off mid-fight. A
+    // severed leg cripples the gait to a stagger; a severed arm ends its reach.
+    if (hit.zone === 'LIMB' && hit.limb) {
+      zombie.limbDamage = zombie.limbDamage || {};
+      const trauma = (zombie.limbDamage[hit.limb] || 0) + finalDamage;
+      zombie.limbDamage[hit.limb] = trauma;
+      if (!zombie.severedLimbs?.[hit.limb] && trauma >= 70) {
+        this.severLimb(zombie, hit.limb, hitPos, isSpitter);
+        if (hit.limb === 'LEG_L' || hit.limb === 'LEG_R') {
+          zombie.speedMultiplier = Math.min(zombie.speedMultiplier || 1.0, 0.45);
+        }
+      }
+    }
+
     // Volatile explosive fuel drum strapped to chest (matching image)
     if (hit.zone === 'BARREL' && !zombie.isDead) {
       soundFx.playExplosion();
@@ -241,20 +347,37 @@ export class ZombieManager {
       // Decapitation gore effect on fatal headshot
       if (hit.zone === 'HEAD') {
         zombie.isDecapitated = true;
-        zombie.head.visible = false;
+        ZombieModelFactory.applyDecapitation(zombie);
         ParticleSystem.spawnGoreGibs(zombie.mesh.position.clone().add(new THREE.Vector3(0, 1.6, 0)), new THREE.Vector3(0, 1, 0), 8);
         ParticleSystem.spawnBlood(zombie.mesh.position.clone().add(new THREE.Vector3(0, 1.6, 0)), new THREE.Vector3(0, 1, 0), true, zombie.type === 'spitter');
         soundFx.playDismemberment();
-      } else if (hit.zone === 'LIMB' && Math.random() < 0.6) {
-        zombie.isDismemberedArm = true;
-        zombie.leftArm.visible = false;
-        ParticleSystem.spawnGoreGibs(zombie.mesh.position.clone().add(new THREE.Vector3(-0.4, 1.3, 0)), new THREE.Vector3(-1, 0.5, 0), 4);
-        soundFx.playDismemberment();
+      } else if (hit.zone === 'LIMB' && hit.limb) {
+        // Fatal limb shot: the struck limb always comes off
+        this.severLimb(zombie, hit.limb, hitPos, isSpitter);
+      } else if (hit.zone === 'TORSO' && !zombie.isBoss && Math.random() < 0.25) {
+        // Torso kills occasionally tear an arm loose from the blunt trauma
+        this.severLimb(zombie, Math.random() < 0.5 ? 'ARM_L' : 'ARM_R', hitPos, isSpitter);
       }
 
-      // Ground blood pool under deceased zombie with type-scaled size
-      const poolSize = zombie.type === 'colossus' ? 4.8 : zombie.type === 'brute' ? 3.2 : 2.4;
-      ParticleSystem.spawnBloodDecal(new THREE.Vector3(zombie.mesh.position.x, 0.02, zombie.mesh.position.z), poolSize);
+      // Heavy gore spill: a large glossy pool spreads UNDER the fallen body
+      // plus splatter satellites around it — the kill site stays drenched
+      const poolSize = zombie.type === 'colossus' ? 6.0 : zombie.type === 'brute' ? 4.2 : 3.4;
+      const bodyPos = zombie.mesh.position;
+      const poolLife = 42 + Math.random() * 12; // outlives the corpse bleed window
+      ParticleSystem.spawnBloodDecal(new THREE.Vector3(bodyPos.x, 0.02, bodyPos.z), poolSize, poolLife);
+      for (let pool = 0; pool < 6; pool++) {
+        const angle = Math.random() * Math.PI * 2;
+        const spread = 0.5 + Math.random() * 1.7;
+        ParticleSystem.spawnBloodDecal(
+          new THREE.Vector3(
+            bodyPos.x + Math.cos(angle) * spread,
+            0.02 + pool * 0.001,
+            bodyPos.z + Math.sin(angle) * spread
+          ),
+          poolSize * (0.3 + Math.random() * 0.42),
+          poolLife
+        );
+      }
       // Directional splatter from impact
       ParticleSystem.spawnBlood(zombie.mesh.position.clone().add(new THREE.Vector3(0, 1.0, 0)), new THREE.Vector3(0, 0.5, 0), hit.zone === 'HEAD', zombie.type === 'spitter');
 
@@ -287,6 +410,30 @@ export class ZombieManager {
     return { isFatal: false, zombie };
   }
 
+  /**
+   * Tear a specific limb off a zombie (live or fatal) with a gore burst at
+   * the impact point. Returns false when the limb was already gone — callers
+   * use that to avoid duplicate effects.
+   */
+  private severLimb(
+    zombie: ZombieInstance,
+    limb: 'ARM_L' | 'ARM_R' | 'LEG_L' | 'LEG_R',
+    at: THREE.Vector3,
+    isSpitter: boolean
+  ): boolean {
+    if (!ZombieModelFactory.applyDismemberLimb(zombie, limb)) return false;
+    zombie.severedLimbs = zombie.severedLimbs || {};
+    zombie.severedLimbs[limb] = true;
+
+    const stump = at.clone();
+    const gushDir = new THREE.Vector3((Math.random() - 0.5) * 1.6, 0.7, (Math.random() - 0.5) * 1.6).normalize();
+    ParticleSystem.spawnGoreGibs(stump, gushDir, 5);
+    // shotgun=true gives the heavy burst that also stamps the ground decal below
+    ParticleSystem.spawnBlood(stump, gushDir, false, isSpitter, true);
+    soundFx.playDismemberment();
+    return true;
+  }
+
   public damageArea(center: THREE.Vector3, radius: number, damage: number, onKill: (zombie: ZombieInstance, isHeadshot: boolean) => void) {
     for (const z of this.zombies) {
       if (z.isDead) continue;
@@ -299,6 +446,38 @@ export class ZombieManager {
     }
   }
 
+  /**
+   * Melee shove: knocks every zombie in range away from the player and
+   * staggers them — the anti-crowd escape move. Returns how many were hit.
+   */
+  public shove(origin: THREE.Vector3, range: number = 2.4): number {
+    let shoved = 0;
+    for (const z of this.zombies) {
+      if (z.isDead) continue;
+      const dist = z.mesh.position.distanceTo(origin);
+      if (dist > range) continue;
+
+      const dir = z.mesh.position.clone().sub(origin).setY(0);
+      if (dir.lengthSq() < 0.001) {
+        dir.set(Math.random() - 0.5, 0, Math.random() - 0.5);
+      }
+      dir.normalize();
+
+      // Knockback: strongest at point-blank; bosses barely budge
+      const falloff = 1 - dist / range;
+      const knock = z.isBoss ? 0.45 : 1.2 + falloff * 0.7;
+      z.mesh.position.addScaledVector(dir, knock);
+      z.mesh.position.y = 0;
+
+      // Stun window — they cannot chase or attack while reeling
+      z.state = 'STAGGER';
+      z.staggerTimer = z.isBoss ? 0.35 : 0.75 + Math.random() * 0.35;
+      z.isAlerted = true;
+      shoved++;
+    }
+    return shoved;
+  }
+
   public update(
     delta: number,
     playerPosition: THREE.Vector3,
@@ -307,14 +486,33 @@ export class ZombieManager {
     isFlashlightOn: boolean = false,
     droneTarget?: { isDeployed: boolean; position: THREE.Vector3; onDamageDrone?: (amount: number) => void }
   ) {
+    this.frame++;
+
+    // Custom zombie model arrived after some zombies already spawned with the
+    // procedural fallback (slow stream / offline start) — swap them over so
+    // the roster matches the authored model.
+    if (this.fallbackAlive > 0 && GltfZombieFactory.ready) {
+      this.upgradeFallbackZombies();
+    }
+
     for (let i = this.zombies.length - 1; i >= 0; i--) {
       const z = this.zombies[i];
 
-      // Remove after death animation
+      // Death animation settles, then the corpse STAYS on the ground bleeding
+      // out (moved to the corpse roster instead of being removed)
       if (z.isDead) {
         ZombieModelFactory.updateZombieAnimation(z, delta, 10);
-        if (z.deathTimer > 3.5) {
-          this.scene.remove(z.mesh);
+        if (z.deathTimer > 3.0) {
+          this.corpses.push({
+            mesh: z.mesh,
+            settle: z.deathTimer,
+            mixer: z.gltfRig ? z.gltfRig.mixer : null,
+            bleedTimer: 0,
+            repoolTimer: 0,
+            poolSize: z.type === 'colossus' ? 5.5 : z.type === 'brute' ? 4.0 : 3.0,
+            sinkTimer: 0,
+            sinking: false,
+          });
           this.zombies.splice(i, 1);
           if (this.bossInstance === z) this.bossInstance = null;
         }
@@ -322,6 +520,14 @@ export class ZombieManager {
       }
 
       const distToPlayer = z.mesh.position.distanceTo(playerPosition);
+
+      // FAR-VISIBILITY CULL: frustumCulled is disabled on skinned meshes
+      // (bind-pose bounds are wrong), so distant zombies behind/above the
+      // camera would keep rendering. Beyond 85m they sit inside the fog haze
+      // anyway — hide the whole rig and skip all per-frame cosmetics.
+      const farCull = !z.isBoss && distToPlayer > 85;
+      if (z.mesh.visible === farCull) z.mesh.visible = !farCull;
+      if (farCull) continue;
 
       // Target determination: player or low recon drone (when altitude <= 3.8m)
       let targetPos = playerPosition;
@@ -602,6 +808,11 @@ export class ZombieManager {
               impactFloor.y = 0.02;
               ParticleSystem.spawnBloodDecal(impactFloor, z.type === 'colossus' ? 2.5 : 1.4);
               onPlayerAttacked(z.config.damage, z.mesh.position);
+
+              // Lunge recovery: the zombie reels after striking, giving the
+              // player a beat to shove or back away instead of being blendered
+              z.state = 'STAGGER';
+              z.staggerTimer = z.isBoss ? 0.3 : 0.55;
             }
           } else {
             // CHASE
@@ -659,6 +870,11 @@ export class ZombieManager {
               currentSpeed *= z.slowMultiplier;
             }
 
+            // Close-range falloff: sprinting away actually opens distance
+            if (distToPlayer < 6.0) {
+              currentSpeed *= 0.85;
+            }
+
             // Forward movement combined with lateral separation
             const forward = new THREE.Vector3(Math.sin(z.mesh.rotation.y), 0, Math.cos(z.mesh.rotation.y));
             const moveVec = forward.multiplyScalar(currentSpeed);
@@ -667,6 +883,15 @@ export class ZombieManager {
 
             z.mesh.position.addScaledVector(moveVec, delta);
 
+            // Body block: zombies never overlap the player's body — they stop
+            // at melee reach instead of walking through/into the camera
+            const distAfter = z.mesh.position.distanceTo(playerPosition);
+            if (distAfter < 0.65 && distAfter > 0.001) {
+              const pushOut = z.mesh.position.clone().sub(playerPosition).setY(0).normalize().multiplyScalar(0.65);
+              z.mesh.position.copy(playerPosition).add(pushOut);
+              z.mesh.position.y = 0;
+            }
+
             // Keep in bounds across expanded map
             z.mesh.position.x = Math.max(-115, Math.min(115, z.mesh.position.x));
             z.mesh.position.z = Math.max(-145, Math.min(155, z.mesh.position.z));
@@ -674,8 +899,75 @@ export class ZombieManager {
         }
       }
 
+      // Building collision for every movement mode (wander / alleys / chase):
+      // zombies slide along walls, never phase through them
+      NavCollision.resolve(z.mesh.position, z.isBoss ? 0.85 : 0.45, z.isBoss ? 3.2 : 1.8);
+
+      // FAR-ZOMBIE LOD: beyond 55m, alternate frames skip animation entirely
+      // (movement already happened above; the animation clock is compensated
+      // with a doubled delta on update frames so pace stays correct).
+      const farLod = distToPlayer > 55 && !z.isBoss;
+      if (farLod && (this.frame + i) % 2 !== 0) continue;
+
       // Update procedural animation based on state
-      ZombieModelFactory.updateZombieAnimation(z, delta, distToTarget);
+      ZombieModelFactory.updateZombieAnimation(z, farLod ? delta * 2 : delta, distToTarget);
+    }
+
+    this.updateCorpses(delta);
+  }
+
+  /**
+   * Persistent corpses: bodies stay on the ground bleeding out. When the
+   * roster overflows the cap, the oldest corpse sinks into the asphalt and
+   * is reclaimed — keeps the battlefield covered in bodies without unbounded
+   * memory or render cost.
+   */
+  private updateCorpses(delta: number) {
+    // Overflow: oldest corpses sink away
+    if (this.corpses.length > this.MAX_CORPSES) {
+      this.corpses[0].sinking = true;
+    }
+
+    for (let i = this.corpses.length - 1; i >= 0; i--) {
+      const c = this.corpses[i];
+
+      if (c.sinking) {
+        c.sinkTimer += delta;
+        c.mesh.position.y -= delta * 0.45;
+        if (c.sinkTimer > 3.2) {
+          this.scene.remove(c.mesh);
+          this.corpses.splice(i, 1);
+        }
+        continue;
+      }
+
+      // Let the death clip finish playing, then freeze the pose (zero cost)
+      if (c.mixer && c.settle < 5.0) {
+        c.mixer.update(delta);
+        c.settle += delta;
+      }
+
+      // Freshly dead bodies keep leaking — the pool beneath them grows
+      c.bleedTimer -= delta;
+      if (c.bleedTimer <= 0 && c.settle < 9.0) {
+        c.bleedTimer = 0.55 + Math.random() * 0.5;
+        const dripPos = c.mesh.position.clone().add(
+          new THREE.Vector3((Math.random() - 0.5) * 1.3, 0.1, (Math.random() - 0.5) * 1.3)
+        );
+        ParticleSystem.spawnBleedDrip(dripPos);
+      }
+
+      // Long-lived pool: refresh the blood beneath the corpse so the stain
+      // stays fresh around the body instead of fading out with the decals.
+      // Small satellites on a slow cadence — the big pool is stamped at death.
+      c.repoolTimer -= delta;
+      if (c.repoolTimer <= 0) {
+        c.repoolTimer = 4.5 + Math.random() * 2.0;
+        const poolPos = c.mesh.position.clone().add(
+          new THREE.Vector3((Math.random() - 0.5) * 2.2, 0.02, (Math.random() - 0.5) * 2.2)
+        );
+        ParticleSystem.spawnBloodDecal(poolPos, c.poolSize * (0.3 + Math.random() * 0.25), 25);
+      }
     }
   }
 
@@ -698,6 +990,10 @@ export class ZombieManager {
     this.zombies = [];
     this.activeZombieCount = 0;
     this.bossInstance = null;
+    for (const c of this.corpses) {
+      this.scene.remove(c.mesh);
+    }
+    this.corpses = [];
     for (const p of this.pickups) {
       ParticleSystem.removePickupMesh(p.id);
     }

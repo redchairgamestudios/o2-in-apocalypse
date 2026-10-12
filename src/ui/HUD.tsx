@@ -25,8 +25,10 @@ import {
   Compass,
   Users,
   Plane,
+  Hand,
 } from 'lucide-react';
 import { WeaponTypeKey, AllyOrder } from '../types';
+import { AirStrikeManager } from '../tactical/AirStrikeManager';
 
 interface HUDProps {
   player: PlayerController;
@@ -50,6 +52,7 @@ interface HUDProps {
   turretsCount: number;
   onThrowGrenade: () => void;
   onDeployTurret: () => void;
+  onShove?: () => void;
   hasAllyRecruit?: boolean;
   allyStatus?: {
     isAlive: boolean;
@@ -94,6 +97,7 @@ interface HUDProps {
     isBoss: boolean;
     timestamp: number;
   }>;
+  showFps?: boolean;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -118,6 +122,7 @@ export const HUD: React.FC<HUDProps> = ({
   turretsCount,
   onThrowGrenade,
   onDeployTurret,
+  onShove,
   hasAllyRecruit = false,
   allyStatus,
   hasDrone = false,
@@ -128,9 +133,12 @@ export const HUD: React.FC<HUDProps> = ({
   allyOrder = 'FOLLOW_ME',
   onToggleAllyOrder,
   killFeed = [],
+  showFps = false,
 }) => {
   const radarCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [, setFrameTick] = useState<number>(0);
+  const [fps, setFps] = useState<number>(60);
+  const frameTimesRef = useRef<number[]>([]);
 
   // Auto-hide objective after 5 seconds
   const [isObjectiveExpanded, setIsObjectiveExpanded] = useState<boolean>(!isMobile);
@@ -157,6 +165,16 @@ export const HUD: React.FC<HUDProps> = ({
     let lastTick = 0;
     const loop = (now: number) => {
       animId = requestAnimationFrame(loop);
+      
+      // Track FPS
+      frameTimesRef.current.push(now);
+      if (frameTimesRef.current.length > 60) frameTimesRef.current.shift();
+      if (frameTimesRef.current.length >= 2) {
+        const duration = frameTimesRef.current[frameTimesRef.current.length - 1] - frameTimesRef.current[0];
+        const currentFps = Math.round((frameTimesRef.current.length - 1) * 1000 / duration);
+        setFps(currentFps);
+      }
+      
       if (now - lastTick > 50) {
         lastTick = now;
         setFrameTick(now);
@@ -167,7 +185,10 @@ export const HUD: React.FC<HUDProps> = ({
   }, []);
 
   const curObj = missionManager.getCurrentObjective();
-  const dist = missionManager.getDistanceToCurrentObjective(player.position);
+  // Distance to the beacon anchor (nearest survivor/sample for rescue missions,
+  // the objective point otherwise) — always a meaningful target, never blank space
+  const anchor = missionManager.getObjectiveAnchor(player.position);
+  const dist = anchor ? Math.round(player.position.distanceTo(anchor)) : missionManager.getDistanceToCurrentObjective(player.position);
   const boss = zombieManager.bossInstance;
   const weather = WeatherSystem.getCurrentWeather();
 
@@ -204,28 +225,36 @@ export const HUD: React.FC<HUDProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Red alert: a heavy wave (10+ hostiles) closing within 42m
+    let nearbyHorde = 0;
+    for (const z of zombieManager.zombies) {
+      if (!z.isDead && z.mesh.position.distanceTo(player.position) < 42) nearbyHorde++;
+    }
+    const waveAlert = nearbyHorde > 10;
+
+    ctx.setTransform(2, 0, 0, 2, 0, 0); // render at 2x for a crisp enlarged dial
     ctx.clearRect(0, 0, 96, 96);
 
-    // Radar background
-    ctx.fillStyle = 'rgba(10, 15, 12, 0.75)';
+    // Radar background (turns blood-red under a heavy approaching wave)
+    ctx.fillStyle = waveAlert ? 'rgba(58,8,8,0.82)' : 'rgba(10, 15, 12, 0.75)';
     ctx.beginPath();
     ctx.arc(48, 48, 46, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.strokeStyle = 'rgba(34, 197, 94, 0.35)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = waveAlert ? 'rgba(239, 68, 68, 0.75)' : 'rgba(34, 197, 94, 0.35)';
+    ctx.lineWidth = 1.5;
     ctx.stroke();
 
     // Range rings
     [16, 32].forEach((r) => {
       ctx.beginPath();
       ctx.arc(48, 48, r, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(34, 197, 94, 0.18)';
+      ctx.strokeStyle = waveAlert ? 'rgba(239, 68, 68, 0.3)' : 'rgba(34, 197, 94, 0.18)';
       ctx.stroke();
     });
 
     // Player direction tick
-    ctx.fillStyle = '#22c55e';
+    ctx.fillStyle = waveAlert ? '#f87171' : '#22c55e';
     ctx.beginPath();
     ctx.moveTo(48, 43);
     ctx.lineTo(44, 53);
@@ -236,10 +265,11 @@ export const HUD: React.FC<HUDProps> = ({
     const maxRadarDist = 38;
     const scale = 44 / maxRadarDist;
 
-    // Draw Objective Blip
-    if (curObj && curObj.targetPosition) {
-      const dx = curObj.targetPosition[0] - player.position.x;
-      const dz = curObj.targetPosition[2] - player.position.z;
+    // Draw Objective Blip (anchor = beacon target, works for rescue/sample objectives too)
+    const anchor = missionManager.getObjectiveAnchor(player.position);
+    if (curObj && anchor) {
+      const dx = anchor.x - player.position.x;
+      const dz = anchor.z - player.position.z;
       const blipDist = Math.hypot(dx, dz);
 
       if (blipDist <= maxRadarDist * 1.5) {
@@ -248,7 +278,7 @@ export const HUD: React.FC<HUDProps> = ({
         const bx = 48 + Math.sin(blipAngle) * clampedDist * scale;
         const by = 48 - Math.cos(blipAngle) * clampedDist * scale;
 
-        ctx.fillStyle = '#eab308';
+        ctx.fillStyle = curObj.type === 'collect_samples' ? '#f59e0b' : curObj.type === 'rescue_survivors' ? '#22d3ee' : '#eab308';
         ctx.beginPath();
         ctx.arc(bx, by, 3.5, 0, Math.PI * 2);
         ctx.fill();
@@ -276,6 +306,13 @@ export const HUD: React.FC<HUDProps> = ({
   }, [player.position, player.yaw, curObj, zombieManager.zombies]);
 
   const showHit = Date.now() - hitFeedback.timestamp < 140;
+
+  // Heavy-wave alert: 10+ hostiles closing within 42m turns the radar red
+  const nearbyHorde = zombieManager.zombies.reduce(
+    (n, z) => (!z.isDead && z.mesh.position.distanceTo(player.position) < 42 ? n + 1 : n),
+    0
+  );
+  const waveAlert = nearbyHorde > 10;
   const isHeadshot = hitFeedback.isHeadshot;
 
   return (
@@ -373,17 +410,31 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
       )}
 
-      {/* TOP HEADER CONTAINER */}
-      <div className="flex justify-between items-start p-1.5 sm:p-3 md:p-5">
+      {/* TOP HEADER CONTAINER (safe-area aware for notched landscape phones) */}
+      <div className="flex justify-between items-start hud-safe-pad">
+        {/* FPS Counter (top-left when enabled) */}
+        {showFps && (
+          <div className="absolute left-4 top-4 z-30 bg-black/85 border border-zinc-700 px-3 py-1.5 rounded shadow-lg backdrop-blur-xs font-mono text-xs">
+            <div className="flex items-center gap-2 text-cyan-400">
+              <span className="font-teko text-[10px] uppercase tracking-wider">FPS</span>
+              <span className={`font-bold text-lg ${fps < 30 ? 'text-red-400' : fps < 45 ? 'text-amber-400' : 'text-green-400'}`}>
+                {fps}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* TOP LEFT: Compact Tactical Status Gauge (Health & Stamina Slimmed) */}
         <div className="flex items-start gap-1.5 sm:gap-2.5">
           {/* Compact Circular Radar */}
-          <div className={`relative rounded-full border border-green-500/40 bg-black/60 shadow-lg shadow-green-950/40 p-0.5 flex items-center justify-center shrink-0 ${
-            isMobile ? 'w-12 h-12' : 'w-16 h-16 sm:w-18 sm:h-18 md:w-20 md:h-20'
-          }`}>
-            <canvas ref={radarCanvasRef} width={96} height={96} className="w-full h-full" />
-            <span className="absolute bottom-0.5 font-mono text-[7px] sm:text-[9px] text-green-400 font-bold tracking-wider">
-              {dist !== null ? `${dist}m` : 'RADAR'}
+          <div className={`relative rounded-full border bg-black/70 p-0.5 flex items-center justify-center shrink-0 ${
+            waveAlert
+              ? 'border-red-500/90 shadow-red-950/70 animate-pulse'
+              : 'border-green-500/40 shadow-green-950/40'
+          } ${isMobile ? 'w-16 h-16' : 'w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28'}`}>
+            <canvas ref={radarCanvasRef} width={192} height={192} className="w-full h-full" />
+            <span className={`absolute bottom-0 font-mono text-[7px] sm:text-[9px] font-bold tracking-wider ${waveAlert ? 'text-red-400' : 'text-green-400'}`}>
+              {waveAlert ? `${nearbyHorde}!` : dist !== null ? `${dist}m` : 'RADAR'}
             </span>
           </div>
 
@@ -503,7 +554,7 @@ export const HUD: React.FC<HUDProps> = ({
               <span className="font-bold text-zinc-200 truncate max-w-[110px] sm:max-w-[200px] text-[10px] sm:text-[11px] uppercase">
                 {curObj.title}
               </span>
-              {dist !== null && (curObj.type === 'reach_zone' || curObj.type === 'interact_object') && (
+              {dist !== null && (curObj.type === 'reach_zone' || curObj.type === 'interact_object' || curObj.type === 'collect_samples' || curObj.type === 'rescue_survivors') && (
                 <span className="text-amber-400 font-mono text-[9px] sm:text-[10px] font-bold shrink-0">[{dist}m]</span>
               )}
               {curObj.type === 'kill_count' && curObj.targetCount && (
@@ -541,6 +592,16 @@ export const HUD: React.FC<HUDProps> = ({
               {curObj.type === 'kill_count' && curObj.targetCount && (
                 <div className="text-[9px] sm:text-[11px] font-military text-yellow-400 font-bold mt-0.5">
                   [{curObj.currentCount || 0} / {curObj.targetCount} PURGED]
+                </div>
+              )}
+              {curObj.type === 'rescue_survivors' && curObj.targetCount && (
+                <div className="text-[9px] sm:text-[11px] font-military text-cyan-300 font-bold mt-0.5">
+                  [{curObj.currentCount || 0} / {curObj.targetCount} RESCUED] — [E] NEAR CIVILIAN
+                </div>
+              )}
+              {curObj.type === 'collect_samples' && curObj.targetCount && (
+                <div className="text-[9px] sm:text-[11px] font-military text-amber-300 font-bold mt-0.5">
+                  [{curObj.currentCount || 0} / {curObj.targetCount} SECURED] — WALK OVER CASES
                 </div>
               )}
               {curObj.type === 'survive_time' && (
@@ -672,6 +733,21 @@ export const HUD: React.FC<HUDProps> = ({
             </button>
           )}
 
+          {/* Melee Shove Button (Desktop) — anti-crowd escape move */}
+          {!isMobile && (
+            <button
+              onClick={onShove}
+              className="pointer-events-auto border px-2 py-1 rounded flex items-center gap-1.5 transition-all active:scale-95 shadow-md cursor-pointer bg-black/80 border-zinc-700 text-zinc-300 hover:border-sky-500/70 hover:text-sky-300"
+              title="Shove nearby zombies away [V] — breaks out of swarms"
+            >
+              <Hand className="w-3.5 h-3.5 text-sky-400" />
+              <div className="flex flex-col items-start leading-tight">
+                <span className="font-teko text-xs tracking-wider font-bold">SHOVE [V]</span>
+                <span className="font-mono text-[9px] font-semibold text-zinc-500">ESCAPE</span>
+              </div>
+            </button>
+          )}
+
           {/* Tactical Flashlight Button (Desktop only) */}
           {!isMobile && (
             <button
@@ -712,16 +788,41 @@ export const HUD: React.FC<HUDProps> = ({
             <span className="font-teko text-[9px] sm:text-xs text-zinc-400 uppercase tracking-wider">
               {player.weaponConfig.name}
             </span>
-            <div className="flex items-baseline gap-1">
-              <span
-                className={`font-teko text-lg sm:text-2xl font-bold tracking-tight ${
-                  player.currentMag <= 3 ? 'text-red-500 animate-pulse' : 'text-white'
-                }`}
-              >
-                {player.currentMag}
-              </span>
-              <span className="font-military text-[9px] sm:text-xs text-zinc-500">/ {player.reserveAmmo}</span>
-            </div>
+            {player.weaponConfig.melee ? (
+              // Katana: no ammo — show an endless blade glyph
+              <span className="font-teko text-lg sm:text-2xl font-bold tracking-tight text-cyan-300 leading-tight">∞</span>
+            ) : player.weaponConfig.id === 'airstrike' ? (
+              // Ordinance tablet: strike charges / cooldown instead of ammo
+              <div className="flex items-baseline gap-1">
+                <span
+                  className={`font-teko text-lg sm:text-2xl font-bold tracking-tight ${
+                    AirStrikeManager.getCharges() <= 0
+                      ? 'text-red-500 animate-pulse'
+                      : AirStrikeManager.getCooldown() > 0
+                      ? 'text-amber-400'
+                      : 'text-white'
+                  }`}
+                >
+                  {AirStrikeManager.getCooldown() > 0
+                    ? `${Math.ceil(AirStrikeManager.getCooldown())}s`
+                    : AirStrikeManager.getCharges()}
+                </span>
+                <span className="font-military text-[9px] sm:text-xs text-zinc-500">
+                  / {AirStrikeManager.getCharges()} STRIKE{AirStrikeManager.getCharges() === 1 ? '' : 'S'}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-baseline gap-1">
+                <span
+                  className={`font-teko text-lg sm:text-2xl font-bold tracking-tight ${
+                    player.currentMag <= 3 ? 'text-red-500 animate-pulse' : 'text-white'
+                  }`}
+                >
+                  {player.currentMag}
+                </span>
+                <span className="font-military text-[9px] sm:text-xs text-zinc-500">/ {player.reserveAmmo}</span>
+              </div>
+            )}
             {player.isReloading && (
               <span className="text-[8px] sm:text-[9px] font-military text-yellow-400 font-bold uppercase animate-pulse">
                 RELOAD...
@@ -743,7 +844,7 @@ export const HUD: React.FC<HUDProps> = ({
 
       {/* DYNAMIC KILL FEED */}
       {killFeed && killFeed.length > 0 && (
-        <div className="absolute top-16 sm:top-20 right-2 sm:right-4 z-25 flex flex-col items-end gap-1 pointer-events-none max-w-[280px] sm:max-w-xs">
+        <div className="absolute top-16 sm:top-20 right-[max(env(safe-area-inset-right),0.5rem)] sm:right-[max(env(safe-area-inset-right),1rem)] z-25 flex flex-col items-end gap-1 pointer-events-none max-w-[240px] sm:max-w-xs">
           {killFeed.slice(-5).map((kf) => (
             <div
               key={kf.id}
@@ -777,7 +878,7 @@ export const HUD: React.FC<HUDProps> = ({
 
       {/* BOSS HEALTH BAR */}
       {boss && !boss.isDead && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 w-64 sm:w-80 md:w-96 bg-black/85 border border-red-600/80 p-2 rounded shadow-2xl backdrop-blur-sm z-20">
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 w-52 sm:w-80 md:w-96 bg-black/85 border border-red-600/80 p-2 rounded shadow-2xl backdrop-blur-sm z-20">
           <div className="flex justify-between items-center text-xs font-teko text-red-500 tracking-wider font-bold mb-1">
             <span>MUTANT BOSS: {boss.config?.name?.toUpperCase() || 'THE COLOSSUS'}</span>
             <span>{Math.ceil((boss.hp / boss.maxHp) * 100)}%</span>
@@ -866,7 +967,58 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
       )}
 
-      {/* CENTER CROSSHAIR & CRITICAL FEEDBACK */}
+      {/* SNIPER SCOPE OVERLAY — circular masked zoom optic */}
+      {player.isScoped && (
+        <div className="absolute inset-0 z-30 pointer-events-none">
+          {/* Black mask with a circular cutout for the optic */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                'radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 0, rgba(0,0,0,0) min(37vh,37vw), rgba(0,0,0,0.97) calc(min(37vh,37vw) + 2px))',
+            }}
+          />
+          {/* Optic ring with inner shadow */}
+          <div
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-black/95"
+            style={{
+              width: 'min(74vh,74vw)',
+              height: 'min(74vh,74vw)',
+              boxShadow: 'inset 0 0 70px rgba(0,0,0,0.9), 0 0 24px rgba(0,0,0,0.8)',
+            }}
+          />
+          {/* Reticle: full hairlines + mil ticks + center dot */}
+          <div
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+            style={{ width: 'min(72vh,72vw)', height: 'min(72vh,72vw)' }}
+          >
+            <div className="absolute left-0 right-0 top-1/2 h-px bg-black/90 -translate-y-1/2" />
+            <div className="absolute top-0 bottom-0 left-1/2 w-px bg-black/90 -translate-x-1/2" />
+            {/* mil ticks along the horizontal */}
+            {[-0.32, -0.24, -0.16, -0.08, 0.08, 0.16, 0.24, 0.32].map((frac) => (
+              <div
+                key={frac}
+                className="absolute top-1/2 -translate-y-1/2 w-px h-[10px] bg-black/85"
+                style={{ left: `${50 + frac * 100}%` }}
+              />
+            ))}
+            {/* range chevrons below center */}
+            {[-0.1, -0.18, -0.26].map((frac, i) => (
+              <div
+                key={frac}
+                className="absolute left-1/2 -translate-x-1/2 w-[10px] h-px bg-red-600/80"
+                style={{ top: `${50 - frac * 100}%` }}
+              >
+                <span className="absolute left-3 -top-1 font-mono text-[7px] text-red-500/90">{(i + 1) * 100}</span>
+              </div>
+            ))}
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]" />
+          </div>
+        </div>
+      )}
+
+      {/* CENTER CROSSHAIR & CRITICAL FEEDBACK (hidden while the sniper scope is up) */}
+      {!player.isScoped && (
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <div className="relative w-8 h-8 flex items-center justify-center">
           <div className="w-1 h-1 bg-white/80 rounded-full shadow-sm shadow-black" />
@@ -887,6 +1039,7 @@ export const HUD: React.FC<HUDProps> = ({
           )}
         </div>
       </div>
+      )}
 
       {/* INTERACTIVE OBJECT PROMPT */}
       {curObj && curObj.type === 'interact_object' && dist !== null && dist <= 6.0 && (
@@ -914,7 +1067,7 @@ export const HUD: React.FC<HUDProps> = ({
 
           {/* Unlocked Weapon Slots */}
           <div className="flex items-center gap-1 border-l border-zinc-800 pl-1.5">
-            {(['pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper'] as WeaponTypeKey[]).map((wKey, idx) => {
+            {(['pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper', 'rocket', 'katana', 'airstrike'] as WeaponTypeKey[]).map((wKey, idx) => {
               const isUnlocked = unlockedWeapons.includes(wKey);
               const isEquipped = player.weaponConfig.id === wKey;
               if (!isUnlocked) return null;
@@ -939,118 +1092,37 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
       )}
 
-      {/* MOBILE CONTROLS OVERLAY - SLEEK UNCLUTTERED ERGONOMIC THUMB LAYOUT */}
+      {/* MOBILE RADIAL WEAPON DIAL — 5 tactical sections around a center fire button */}
       {isMobile && (
-        <div className="absolute right-3 bottom-3 flex flex-col items-end gap-2 pointer-events-none z-20">
-          {/* Tactical Action Strip: Grenades, Turrets, Combat Drone & Ally Squad Commands */}
-          {(grenadesCount > 0 || turretsCount > 0 || hasDrone || hasAllyRecruit) && (
-            <div className="flex items-center gap-2 pointer-events-auto mb-1 flex-wrap justify-end">
-              {/* Ally Squad Command Button (One-touch toggle) */}
-              {hasAllyRecruit && onToggleAllyOrder && (
+        <div className="absolute right-[max(env(safe-area-inset-right),0.4rem)] bottom-[max(env(safe-area-inset-bottom),0.4rem)] z-20 pointer-events-none select-none">
+          {/* Drone altitude shifter (when the UAV is airborne) */}
+          {hasDrone && droneStatus?.isDeployed && (
+            <div className="flex justify-end mb-1.5 pr-3 pointer-events-auto">
+              <div className="flex items-center bg-cyan-950/90 border border-cyan-500/70 rounded-full p-0.5 shadow-lg">
                 <button
-                  onClick={onToggleAllyOrder}
-                  className={`h-9 px-2.5 rounded-full border flex items-center gap-1 active:scale-95 shadow-lg ${
-                    allyOrder === 'FOLLOW_ME'
-                      ? 'bg-emerald-950/90 border-emerald-500/80 text-emerald-300'
-                      : 'bg-amber-950/90 border-amber-500/80 text-amber-300'
-                  }`}
-                  title="Toggle Squad Order"
+                  onClick={onDroneAscend}
+                  className="w-8 h-8 rounded-full bg-cyan-900/90 hover:bg-cyan-800 text-cyan-200 flex items-center justify-center active:scale-90"
+                  title="Ascend Altitude"
                 >
-                  {allyOrder === 'FOLLOW_ME' ? (
-                    <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                  ) : (
-                    <Compass className="w-3.5 h-3.5 text-amber-400" />
-                  )}
-                  <span className="font-teko text-xs font-bold uppercase tracking-wide">
-                    {allyOrder === 'FOLLOW_ME' ? 'FOLLOW ME' : 'SEARCH & ATK'}
-                  </span>
+                  <ArrowUp className="w-4 h-4 text-cyan-300" />
                 </button>
-              )}
-
-              {/* Combat Recon Drone Button & Mobile Altitude Shifter */}
-              {hasDrone && onDeployDrone && (
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={onDeployDrone}
-                    disabled={!droneStatus?.isDeployed && !droneStatus?.isReady}
-                    className={`h-9 px-2.5 rounded-full border flex items-center gap-1 active:scale-95 shadow-lg ${
-                      droneStatus?.isDeployed
-                        ? 'bg-cyan-950/95 border-cyan-400 text-cyan-300 animate-pulse shadow-cyan-900/50'
-                        : droneStatus?.isReady
-                        ? 'bg-cyan-950/85 border-cyan-500/80 text-cyan-300'
-                        : 'bg-black/70 border-zinc-700 text-zinc-500 opacity-50 cursor-not-allowed'
-                    }`}
-                    title="Deploy / Recall Recon Drone"
-                  >
-                    <Radio className={`w-3.5 h-3.5 ${droneStatus?.isDeployed ? 'text-cyan-300 animate-spin' : 'text-cyan-400'}`} />
-                    <span className="font-teko text-xs font-bold uppercase tracking-wide">
-                      {droneStatus?.isDeployed
-                        ? `UAV ${Math.ceil(droneStatus.batteryRemaining)}s`
-                        : droneStatus?.cooldownRemaining && droneStatus.cooldownRemaining > 0
-                        ? `CD ${Math.ceil(droneStatus.cooldownRemaining)}s`
-                        : 'UAV [30s]'}
-                    </span>
-                  </button>
-
-                  {/* Altitude Up / Down Buttons for Drone Flight on Mobile */}
-                  {droneStatus?.isDeployed && (
-                    <div className="flex items-center bg-cyan-950/90 border border-cyan-500/70 rounded-full p-0.5 shadow-lg">
-                      <button
-                        onClick={onDroneAscend}
-                        className="w-8 h-8 rounded-full bg-cyan-900/90 hover:bg-cyan-800 text-cyan-200 flex items-center justify-center active:scale-90"
-                        title="Ascend Altitude (Higher View)"
-                      >
-                        <ArrowUp className="w-4 h-4 text-cyan-300" />
-                      </button>
-                      <span className="font-mono text-[9px] text-cyan-300 font-bold px-1 whitespace-nowrap">
-                        {Math.round(droneStatus.altitude || 12)}m
-                      </span>
-                      <button
-                        onClick={onDroneDescend}
-                        className="w-8 h-8 rounded-full bg-cyan-900/90 hover:bg-cyan-800 text-cyan-200 flex items-center justify-center active:scale-90"
-                        title="Descend Altitude (Lower Strike)"
-                      >
-                        <ArrowDown className="w-4 h-4 text-cyan-300" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Frag Grenade */}
-              {grenadesCount > 0 && (
+                <span className="font-mono text-[9px] text-cyan-300 font-bold px-1 whitespace-nowrap">
+                  {Math.round(droneStatus.altitude || 12)}m
+                </span>
                 <button
-                  onClick={onThrowGrenade}
-                  className="w-9 h-9 rounded-full bg-red-950/85 border border-red-500/80 flex items-center justify-center text-red-300 active:scale-90 shadow-lg relative"
-                  title="Frag Grenade"
+                  onClick={onDroneDescend}
+                  className="w-8 h-8 rounded-full bg-cyan-900/90 hover:bg-cyan-800 text-cyan-200 flex items-center justify-center active:scale-90"
+                  title="Descend Altitude"
                 >
-                  <Bomb className="w-4 h-4 text-red-400" />
-                  <span className="absolute -top-1 -right-1 bg-red-600 text-white font-mono text-[8px] w-3.5 h-3.5 rounded-full flex items-center justify-center font-bold">
-                    {grenadesCount}
-                  </span>
+                  <ArrowDown className="w-4 h-4 text-cyan-300" />
                 </button>
-              )}
-
-              {/* Sentry Turret */}
-              {turretsCount > 0 && (
-                <button
-                  onClick={onDeployTurret}
-                  className="w-9 h-9 rounded-full bg-blue-950/85 border border-blue-500/80 flex items-center justify-center text-blue-300 active:scale-90 shadow-lg relative"
-                  title="Sentry Turret"
-                >
-                  <Shield className="w-4 h-4 text-blue-400" />
-                  <span className="absolute -top-1 -right-1 bg-blue-600 text-white font-mono text-[8px] w-3.5 h-3.5 rounded-full flex items-center justify-center font-bold">
-                    {turretsCount}
-                  </span>
-                </button>
-              )}
+              </div>
             </div>
           )}
 
-          {/* Primary Action Cluster */}
-          <div className="flex items-end gap-2.5 pointer-events-auto">
-            <div className="flex flex-col gap-1.5">
-              {/* Jump */}
+          <div className="flex items-end gap-3">
+            {/* Movement utilities column (clearly separated from the dial) */}
+            <div className="flex flex-col gap-2 pointer-events-auto mb-1.5">
               <button
                 onClick={onJump}
                 className="w-11 h-11 rounded-full bg-black/60 border border-sky-400/70 backdrop-blur-xs flex flex-col items-center justify-center text-sky-400 active:scale-95 shadow-md"
@@ -1060,7 +1132,6 @@ export const HUD: React.FC<HUDProps> = ({
                 <span className="font-teko text-[8px] font-bold leading-none">JUMP</span>
               </button>
 
-              {/* Dedicated Weapon Swap Button */}
               <button
                 onClick={onSwitchWeapon}
                 className="w-11 h-11 rounded-full bg-black/60 border border-amber-500/70 backdrop-blur-xs flex flex-col items-center justify-center text-amber-300 active:scale-95 shadow-md"
@@ -1070,23 +1141,150 @@ export const HUD: React.FC<HUDProps> = ({
                 <span className="font-teko text-[8px] font-bold leading-none text-amber-300">SWAP</span>
               </button>
 
-              {/* Reload Button */}
               <button
                 onClick={onReload}
-                className="w-12 h-12 rounded-full bg-black/60 border border-yellow-500/80 backdrop-blur-xs flex flex-col items-center justify-center text-yellow-400 active:scale-95 shadow-md"
+                className="w-11 h-11 rounded-full bg-black/60 border border-yellow-500/80 backdrop-blur-xs flex flex-col items-center justify-center text-yellow-400 active:scale-95 shadow-md"
                 title="Reload Magazine"
               >
                 <RotateCcw className="w-4 h-4" />
-                <span className="text-[9px] font-mono leading-none mt-0.5">{player.currentMag}</span>
+                <span className="text-[9px] font-mono leading-none mt-0.5">
+                  {player.weaponConfig.melee
+                    ? '∞'
+                    : player.weaponConfig.id === 'airstrike'
+                    ? AirStrikeManager.getCharges()
+                    : player.currentMag}
+                </span>
               </button>
             </div>
 
-            {/* Ergonomic Semi-Transparent Shoot Button */}
-            <div
-              id="mobile-shoot-btn"
-              className="w-18 h-18 rounded-full bg-red-600/35 hover:bg-red-600/50 active:bg-red-600/80 border-2 border-red-500/80 backdrop-blur-xs flex items-center justify-center shadow-2xl active:scale-95 transition-transform cursor-pointer"
-            >
-              <Crosshair className="w-8 h-8 text-white/90 drop-shadow" />
+            {/* THE RADIAL DIAL — 6 sections placed by trig on a 66px ring so
+                every button sits fully inside the dial (no edge overflow) */}
+            <div className="relative w-[200px] h-[200px] pointer-events-auto">
+              {/* dial base */}
+              <div className="absolute inset-0 rounded-full bg-black/50 border-2 border-zinc-700/80 shadow-2xl shadow-black/70 backdrop-blur-[2px]" />
+              <div className="absolute inset-[30px] rounded-full border border-cyan-400/20 bg-[radial-gradient(circle,rgba(8,145,178,0.12)_0%,rgba(0,0,0,0)_70%)]" />
+
+              {/* GRENADE (0° — top, green) */}
+              <button
+                onClick={onThrowGrenade}
+                disabled={grenadesCount <= 0}
+                className={`absolute w-[54px] h-[54px] rounded-2xl border-2 bg-zinc-950/90 backdrop-blur-[2px] flex flex-col items-center justify-center active:scale-95 transition-all shadow-lg ${
+                  grenadesCount > 0
+                    ? 'border-emerald-400/80 text-emerald-300 shadow-emerald-900/50'
+                    : 'border-zinc-700 text-zinc-600 opacity-50'
+                }`}
+                style={{ left: 73, top: 7 }}
+                title="Throw Frag Grenade"
+              >
+                <Bomb className="w-4 h-4" />
+                <span className="font-teko text-[8px] font-bold tracking-wider leading-none mt-0.5">GRENADE</span>
+                <span className="absolute -top-1 -right-1 bg-emerald-600 text-white font-mono text-[8px] min-w-[14px] h-[14px] px-0.5 rounded-full flex items-center justify-center font-bold">
+                  {grenadesCount}
+                </span>
+              </button>
+
+              {/* TURRET (60° — upper right, blue) */}
+              <button
+                onClick={onDeployTurret}
+                disabled={turretsCount <= 0}
+                className={`absolute w-[54px] h-[54px] rounded-2xl border-2 bg-zinc-950/90 backdrop-blur-[2px] flex flex-col items-center justify-center active:scale-95 transition-all shadow-lg ${
+                  turretsCount > 0
+                    ? 'border-sky-400/80 text-sky-300 shadow-sky-900/50'
+                    : 'border-zinc-700 text-zinc-600 opacity-50'
+                }`}
+                style={{ left: 130.2, top: 40 }}
+                title="Deploy Sentry Turret"
+              >
+                <Shield className="w-4 h-4" />
+                <span className="font-teko text-[8px] font-bold tracking-wider leading-none mt-0.5">TURRET</span>
+                <span className="absolute -top-1 -right-1 bg-sky-600 text-white font-mono text-[8px] min-w-[14px] h-[14px] px-0.5 rounded-full flex items-center justify-center font-bold">
+                  {turretsCount}
+                </span>
+              </button>
+
+              {/* DRONE (120° — lower right, purple) */}
+              {hasDrone && onDeployDrone && (
+                <button
+                  onClick={onDeployDrone}
+                  disabled={!droneStatus?.isDeployed && !droneStatus?.isReady}
+                  className={`absolute w-[54px] h-[54px] rounded-2xl border-2 bg-zinc-950/90 backdrop-blur-[2px] flex flex-col items-center justify-center active:scale-95 transition-all shadow-lg ${
+                    droneStatus?.isDeployed
+                      ? 'border-purple-300 text-purple-200 animate-pulse shadow-purple-900/60'
+                      : droneStatus?.isReady
+                      ? 'border-purple-400/80 text-purple-300 shadow-purple-900/50'
+                      : 'border-zinc-700 text-zinc-600 opacity-50'
+                  }`}
+                  style={{ left: 130.2, top: 106 }}
+                  title="Deploy / Recall Combat Drone"
+                >
+                  <Radio className="w-4 h-4" />
+                  <span className="font-teko text-[8px] font-bold tracking-wider leading-none mt-0.5">DRONE</span>
+                  {droneStatus?.isDeployed && (
+                    <span className="absolute -top-1 -right-1 bg-purple-500 text-white font-mono text-[8px] min-w-[14px] h-[14px] px-0.5 rounded-full flex items-center justify-center font-bold">
+                      {Math.ceil(droneStatus.batteryRemaining)}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {/* ALLIES (180° — bottom, yellow) */}
+              {hasAllyRecruit && onToggleAllyOrder && (
+                <button
+                  onClick={onToggleAllyOrder}
+                  className="absolute w-[54px] h-[54px] rounded-2xl border-2 border-yellow-400/80 bg-zinc-950/90 backdrop-blur-[2px] flex flex-col items-center justify-center text-yellow-300 active:scale-95 transition-all shadow-lg shadow-yellow-900/40"
+                  style={{ left: 73, top: 139 }}
+                  title={`Squad Order: ${allyOrder === 'FOLLOW_ME' ? 'Follow Me' : 'Search & Attack'}`}
+                >
+                  <Users className="w-4 h-4" />
+                  <span className="font-teko text-[8px] font-bold tracking-wider leading-none mt-0.5">
+                    {allyOrder === 'FOLLOW_ME' ? 'FOLLOW' : 'SEARCH'}
+                  </span>
+                </button>
+              )}
+
+              {/* FLASHLIGHT (240° — lower left, red) */}
+              {onToggleFlashlight && (
+                <button
+                  onClick={onToggleFlashlight}
+                  className={`absolute w-[54px] h-[54px] rounded-2xl border-2 bg-zinc-950/90 backdrop-blur-[2px] flex flex-col items-center justify-center active:scale-95 transition-all shadow-lg ${
+                    isFlashlightOn
+                      ? 'border-red-400/80 text-red-300 shadow-red-900/50'
+                      : 'border-zinc-700 text-zinc-500'
+                  }`}
+                  style={{ left: 15.8, top: 106 }}
+                  title="Toggle Tactical Flashlight"
+                >
+                  <Flashlight className="w-4 h-4" />
+                  <span className="font-teko text-[8px] font-bold tracking-wider leading-none mt-0.5">LIGHT</span>
+                </button>
+              )}
+
+              {/* AIR STRIKE TABLET (300° — upper left, orange) — swaps to the
+                  ordinance designator; raise it again over a live turret to strike */}
+              {unlockedWeapons.includes('airstrike') && (
+                <button
+                  onClick={() => onSelectWeapon?.('airstrike')}
+                  className={`absolute w-[54px] h-[54px] rounded-2xl border-2 bg-zinc-950/90 backdrop-blur-[2px] flex flex-col items-center justify-center active:scale-95 transition-all shadow-lg ${
+                    player.weaponConfig.id === 'airstrike'
+                      ? 'border-orange-300 text-orange-200 animate-pulse shadow-orange-900/60'
+                      : 'border-orange-500/70 text-orange-300 shadow-orange-900/40'
+                  }`}
+                  style={{ left: 15.8, top: 40 }}
+                  title="Ordinance Tablet — requires an active Sentry Turret uplink"
+                >
+                  <Crosshair className="w-4 h-4" />
+                  <span className="font-teko text-[8px] font-bold tracking-wider leading-none mt-0.5">STRIKE</span>
+                </button>
+              )}
+
+              {/* CENTER: FIRE BUTTON */}
+              <div
+                id="mobile-shoot-btn"
+                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[68px] h-[68px] rounded-full bg-red-600/40 hover:bg-red-600/55 active:bg-red-600/85 border-[3px] border-red-400/80 backdrop-blur-[3px] flex items-center justify-center cursor-pointer transition-colors"
+                style={{ boxShadow: '0 0 18px rgba(239,68,68,0.45), inset 0 0 14px rgba(59,130,246,0.28)' }}
+              >
+                <Crosshair className="w-7 h-7 text-white/90 drop-shadow" />
+              </div>
             </div>
           </div>
         </div>

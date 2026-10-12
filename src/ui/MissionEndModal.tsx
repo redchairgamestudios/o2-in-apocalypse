@@ -64,7 +64,7 @@ export const MissionEndModal: React.FC<MissionEndModalProps> = ({
 
   return (
     <div className="absolute inset-0 z-50 bg-black/92 backdrop-blur-lg flex items-center justify-center p-2 sm:p-4 md:p-8 pointer-events-auto overflow-y-auto">
-      <div className="bg-zinc-950/98 border border-zinc-800/90 rounded-2xl max-w-sm sm:max-w-md md:max-w-lg w-full p-3 sm:p-6 md:p-8 shadow-2xl relative overflow-hidden my-auto max-h-[96vh] flex flex-col justify-between">
+      <div className="bg-zinc-950/98 border border-zinc-800/90 rounded-2xl max-w-sm sm:max-w-md md:max-w-lg w-full p-3 sm:p-6 md:p-8 short:p-2 shadow-2xl relative overflow-hidden short:overflow-y-auto my-auto max-h-[96vh] flex flex-col justify-between">
         {/* Glow Header Accent Line */}
         <div
           className={`absolute top-0 inset-x-0 h-1.5 sm:h-2 ${
@@ -79,8 +79,8 @@ export const MissionEndModal: React.FC<MissionEndModalProps> = ({
           <div className="flex items-center justify-center gap-2 mb-1 sm:mb-2">
             {isVictory ? (
               <div className="relative flex items-center justify-center">
-                <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-emerald-950/90 border-2 border-emerald-400 flex items-center justify-center shadow-xl shadow-emerald-900/50">
-                  <Trophy className="w-6 h-6 sm:w-8 sm:h-8 text-emerald-400 animate-pulse" />
+                <div className="w-12 h-12 sm:w-16 sm:h-16 short:w-10 short:h-10 rounded-full bg-emerald-950/90 border-2 border-emerald-400 flex items-center justify-center shadow-xl shadow-emerald-900/50">
+                  <Trophy className="w-6 h-6 sm:w-8 sm:h-8 short:w-5 short:h-5 text-emerald-400 animate-pulse" />
                 </div>
                 {/* Tactical Rank Stamp */}
                 <div className={`absolute -bottom-1 -right-1 font-teko text-xs sm:text-base font-black bg-black/95 px-1.5 py-0.2 rounded-md border border-zinc-700 ${rankColor} shadow-md`}>
@@ -89,8 +89,8 @@ export const MissionEndModal: React.FC<MissionEndModalProps> = ({
               </div>
             ) : (
               <div className="relative flex items-center justify-center">
-                <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-red-950/90 border-2 border-red-500 flex items-center justify-center shadow-xl shadow-red-950/80">
-                  <Skull className="w-6 h-6 sm:w-8 sm:h-8 text-red-500" />
+                <div className="w-12 h-12 sm:w-16 sm:h-16 short:w-10 short:h-10 rounded-full bg-red-950/90 border-2 border-red-500 flex items-center justify-center shadow-xl shadow-red-950/80">
+                  <Skull className="w-6 h-6 sm:w-8 sm:h-8 short:w-5 short:h-5 text-red-500" />
                 </div>
                 <div className="absolute -bottom-1 -right-1 font-teko text-xs sm:text-sm font-black bg-black/95 px-1.5 py-0.2 rounded-md border border-red-800 text-red-400 shadow-md">
                   KIA
@@ -100,7 +100,7 @@ export const MissionEndModal: React.FC<MissionEndModalProps> = ({
           </div>
 
           <h2
-            className={`font-teko text-2xl sm:text-4xl md:text-5xl font-black tracking-wider leading-none mb-0.5 sm:mb-1 ${
+            className={`font-teko text-2xl sm:text-4xl md:text-5xl short:text-xl font-black tracking-wider leading-none mb-0.5 sm:mb-1 ${
               isVictory ? 'text-emerald-400 drop-shadow-[0_0_12px_rgba(52,211,153,0.5)]' : 'text-red-500 drop-shadow-[0_0_12px_rgba(239,68,68,0.5)]'
             }`}
           >
@@ -129,7 +129,7 @@ export const MissionEndModal: React.FC<MissionEndModalProps> = ({
         </div>
 
         {/* Combat Debrief Stats Grid - 4-pill responsive layout */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 mb-2.5 sm:mb-4 bg-zinc-900/90 p-2 sm:p-3 rounded-xl border border-zinc-800/90 shadow-inner font-military">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 mb-2.5 sm:mb-4 short:mb-1.5 bg-zinc-900/90 p-2 sm:p-3 rounded-xl border border-zinc-800/90 shadow-inner font-military">
           {/* Kills */}
           <div className="flex items-center gap-1.5 sm:gap-2 bg-black/60 p-1.5 sm:p-2 rounded-lg border border-zinc-800/80">
             <div className="w-6 h-6 sm:w-7 sm:h-7 rounded bg-red-950/70 border border-red-500/40 flex items-center justify-center shrink-0">
@@ -201,7 +201,7 @@ export const MissionEndModal: React.FC<MissionEndModalProps> = ({
           {isVictory && onNextMission ? (
             <button
               onClick={onNextMission}
-              className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 via-green-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-teko text-xl sm:text-2xl md:text-3xl font-black py-2 sm:py-3 px-4 rounded-xl shadow-xl shadow-emerald-950/80 active:scale-[0.98] transition-all cursor-pointer border border-emerald-400/50 min-h-[48px] touch-manipulation"
+              className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 via-green-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-teko text-xl sm:text-2xl md:text-3xl font-black py-2 sm:py-3 px-4 rounded-xl shadow-xl shadow-emerald-950/80 active:scale-[0.98] transition-all cursor-pointer border border-emerald-400/50 min-h-[48px] short:min-h-[40px] touch-manipulation"
             >
               <span>NEXT MISSION</span>
               <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -209,7 +209,7 @@ export const MissionEndModal: React.FC<MissionEndModalProps> = ({
           ) : (
             <button
               onClick={onRetry}
-              className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-teko text-xl sm:text-2xl md:text-3xl font-black py-2 sm:py-3 px-4 rounded-xl shadow-xl shadow-red-950/80 active:scale-[0.98] transition-all cursor-pointer border border-red-400/50 min-h-[48px] touch-manipulation"
+              className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-teko text-xl sm:text-2xl md:text-3xl font-black py-2 sm:py-3 px-4 rounded-xl shadow-xl shadow-red-950/80 active:scale-[0.98] transition-all cursor-pointer border border-red-400/50 min-h-[48px] short:min-h-[40px] touch-manipulation"
             >
               <RotateCcw className="w-5 h-5 sm:w-6 sm:h-6" />
               <span>{isVictory ? 'REPLAY MISSION' : 'RETRY MISSION'}</span>

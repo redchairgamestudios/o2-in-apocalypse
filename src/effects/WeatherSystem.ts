@@ -315,6 +315,7 @@ export class WeatherSystem {
   }
 
   public static setMissionWeather(missionId: number) {
+    // Each mission gets weather that matches its map's authored atmosphere
     switch (missionId) {
       case 1:
         // Quarantine District: Bright sunny day with high visibility
@@ -336,6 +337,26 @@ export class WeatherSystem {
         // Central Plaza: Apocalyptic storm
         this.setWeather('HEAVY_RAIN');
         break;
+      case 6:
+        // Operation Ironclad (Checkpoint Bravo): Sunny with drifting clouds
+        this.setWeather('SUNNY_DAY');
+        break;
+      case 7:
+        // Blackout Protocol (Substation): Pitch-dark night operation
+        this.setWeather('CLEAR_NIGHT');
+        break;
+      case 8:
+        // Horde Breach (Freight Depot): Toxic biohazard fog with burning embers
+        this.setWeather('DENSE_FOG');
+        break;
+      case 9:
+        // Final Countdown (Central Plaza): Ash-choked apocalypse
+        this.setWeather('ASH_FALL');
+        break;
+      case 10:
+        // Airfield extraction: Cold clear night under floodlights
+        this.setWeather('CLEAR_NIGHT');
+        break;
       default:
         this.setWeather('SUNNY_DAY');
     }
@@ -344,46 +365,15 @@ export class WeatherSystem {
   private static applyWeatherVisuals() {
     if (!this.rainMaterial || !this.emberMaterial) return;
 
+    // NOTE: scene.fog / scene.background / light intensities are owned by the
+    // mission environment (EnvironmentBuilder) so each map keeps its authored
+    // mood. Weather only drives precipitation, embers and lightning tints.
     if (this.currentWeather.type === 'SUNNY_DAY') {
-      if (this.scene) {
-        this.scene.background = new THREE.Color(0x7bb1e8);
-        this.scene.fog = new THREE.Fog(0x8cbfe8, 30, 210);
-      }
-      if (this.moonLightRef) {
-        this.moonLightRef.color.setHex(0xfff7e6);
-        this.moonLightRef.intensity = 2.5;
-      }
-      if (this.ambientLightRef) {
-        this.ambientLightRef.color.setHex(0xb2d6f2);
-        this.ambientLightRef.intensity = 1.4;
-      }
+      this.rainMaterial.color.setHex(0xe2e8f0);
     } else if (this.currentWeather.type === 'AFTERNOON_RAIN') {
-      if (this.scene) {
-        this.scene.background = new THREE.Color(0x64748b);
-        this.scene.fog = new THREE.Fog(0x64748b, 25, 175);
-      }
-      if (this.moonLightRef) {
-        this.moonLightRef.color.setHex(0xdbeafe);
-        this.moonLightRef.intensity = 1.35;
-      }
-      if (this.ambientLightRef) {
-        this.ambientLightRef.color.setHex(0x94a3b8);
-        this.ambientLightRef.intensity = 1.05;
-      }
       this.rainMaterial.color.setHex(0xe2e8f0);
     } else if (this.currentWeather.type === 'GOLDEN_AFTERNOON') {
-      if (this.scene) {
-        this.scene.background = new THREE.Color(0x9a3412);
-        this.scene.fog = new THREE.Fog(0x78350f, 25, 185);
-      }
-      if (this.moonLightRef) {
-        this.moonLightRef.color.setHex(0xfbbf24);
-        this.moonLightRef.intensity = 2.2;
-      }
-      if (this.ambientLightRef) {
-        this.ambientLightRef.color.setHex(0xd97706);
-        this.ambientLightRef.intensity = 1.2;
-      }
+      this.rainMaterial.color.setHex(0xfde68a);
     } else if (this.currentWeather.type === 'ACID_STORM') {
       this.rainMaterial.color.setHex(0xa3e635); // Toxic green rain
       this.emberMaterial.color.setHex(0x84cc16);
@@ -437,13 +427,12 @@ export class WeatherSystem {
   public static update(delta: number, playerPos: THREE.Vector3) {
     this.weatherTimer += delta;
 
-    // Dynamic weather switching every 2.5 - 3 minutes for alive atmosphere
+    // Weather stays as authored per mission — no random mood-breaking switches.
+    // The transition timer is kept only to refresh the current weather visuals.
     this.dynamicTransitionTimer -= delta;
     if (this.dynamicTransitionTimer <= 0) {
       this.dynamicTransitionTimer = 140 + Math.random() * 60;
-      const types: WeatherType[] = ['SUNNY_DAY', 'AFTERNOON_RAIN', 'GOLDEN_AFTERNOON', 'CLEAR_NIGHT', 'HEAVY_RAIN'];
-      const nextType = types[Math.floor(Math.random() * types.length)];
-      this.setWeather(nextType);
+      this.applyWeatherVisuals();
     }
 
     // 1. Rain update around player position

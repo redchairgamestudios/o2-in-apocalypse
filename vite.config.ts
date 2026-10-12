@@ -24,8 +24,8 @@ export default defineConfig(() => {
         ],
         manifest: {
           id: '/',
-          name: 'DEAD ZONE: TRIGGER',
-          short_name: 'DeadZone',
+          name: 'O² in Apocalypse',
+          short_name: 'O²',
           description:
             'A high-fidelity 3D first-person zombie survival shooter with intense urban combat, weapon upgrades, and campaign missions.',
           theme_color: '#0a0a0c',
@@ -56,10 +56,21 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          // Model formats must be precached or the PWA serves the shell offline
+          // while 3D assets 404 — zombies then fall back to generic procedural
+          // models forever. gltf/bin/fbx stay small (~3.5MB total: zombie model
+          // + colossus sculpt); the giant .glb files (heli 49MB, rifle 34MB,
+          // city 33MB, soldier 22MB) deliberately stream over the network —
+          // adding them here exceeds the 8 MiB cap and breaks the SW build.
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,gltf,bin,fbx}'],
+          // Game art assets (boss PBR textures, lobby art) exceed the 2 MiB default
+          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         },
         devOptions: {
-          enabled: true,
+          // Disabled: the dev service worker intercepts module requests and
+          // serves stale bundles after server restarts, repeatedly breaking
+          // dev loads. The PWA build still emits the production SW.
+          enabled: false,
           type: 'module',
         },
       }),

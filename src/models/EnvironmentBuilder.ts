@@ -22,6 +22,19 @@ export interface NarrowPathSpawn {
   name?: string;
 }
 
+export interface KeepOutZone {
+  x: number;
+  z: number;
+  r: number;
+}
+
+export interface MapBounds {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
 export interface EnvironmentResult {
   sceneGroup: THREE.Group;
   colliderBoxes: THREE.Box3[];
@@ -31,6 +44,7 @@ export interface EnvironmentResult {
   playerSpawn: THREE.Vector3;
   spawnPoints: THREE.Vector3[];
   narrowPathSpawns: NarrowPathSpawn[];
+  bounds: MapBounds;
   fogColor: number;
   fogDensity: number;
   ambientColor: number;
@@ -38,6 +52,129 @@ export interface EnvironmentResult {
   directionalColor: number;
   directionalIntensity: number;
   directionalPos: [number, number, number];
+}
+
+/**
+ * Deterministic PRNG so every mission layout is identical between runs.
+ */
+function seededRand(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Scatter a field of hurdles (jersey barriers, crate stacks, concrete pipes
+ * and tire stacks) across a rectangle on a jittered grid so pieces never
+ * overlap. Cells inside any keep-out zone (objectives, spawns, cover
+ * clusters) are skipped.
+ */
+export function createHurdleField(
+  root: THREE.Group,
+  colliderBoxes: THREE.Box3[],
+  opts: {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+    keepOut: KeepOutZone[];
+    count?: number;
+    seed?: number;
+  }
+): void {
+  const { minX, maxX, minZ, maxZ, keepOut } = opts;
+  const count = opts.count ?? 64;
+  const rand = seededRand(opts.seed ?? 1337);
+
+  const concreteMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.85, metalness: 0.08 });
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x8a6b42, roughness: 0.9, metalness: 0.05 });
+  const tireMat = new THREE.MeshStandardMaterial({ color: 0x17181b, roughness: 0.95 });
+
+  const inKeepOut = (x: number, z: number, r: number) =>
+    keepOut.some((k) => Math.hypot(x - k.x, z - k.z) < k.r + r);
+
+  const cell = 9;
+  const cols = Math.max(1, Math.floor((maxX - minX) / cell));
+  const rows = Math.max(1, Math.floor((maxZ - minZ) / cell));
+  const cells: Array<{ x: number; z: number }> = [];
+  for (let cx = 0; cx < cols; cx++) {
+    for (let cz = 0; cz < rows; cz++) {
+      cells.push({
+        x: minX + cell * (cx + 0.5) + (rand() - 0.5) * 4,
+        z: minZ + cell * (cz + 0.5) + (rand() - 0.5) * 4,
+      });
+    }
+  }
+  for (let i = cells.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [cells[i], cells[j]] = [cells[j], cells[i]];
+  }
+
+  let placed = 0;
+  for (const c of cells) {
+    if (placed >= count) break;
+    if (inKeepOut(c.x, c.z, 2.4)) continue;
+
+    const kind = Math.floor(rand() * 4);
+    const rot = rand() * Math.PI;
+    const piece = new THREE.Group();
+    piece.position.set(c.x, 0, c.z);
+    piece.rotation.y = rot;
+
+    if (kind === 0) {
+      // Jersey barrier
+      const m = new THREE.Mesh(new THREE.BoxGeometry(2.7, 1.05, 0.8), concreteMat);
+      m.position.y = 0.52;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      piece.add(m);
+      const box = new THREE.Box3();
+      box.setFromCenterAndSize(piece.position, new THREE.Vector3(2.6, 1.1, 2.6));
+      colliderBoxes.push(box);
+    } else if (kind === 1) {
+      // Wooden crate stack
+      for (let s = 0; s < 3; s++) {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1.15, 1.15), woodMat);
+        m.position.set((rand() - 0.5) * 0.5, 0.58 + s * 1.16, (rand() - 0.5) * 0.5);
+        m.rotation.y = rand() * 0.6;
+        m.castShadow = true;
+        piece.add(m);
+      }
+      const box = new THREE.Box3();
+      box.setFromCenterAndSize(piece.position, new THREE.Vector3(2.2, 3.6, 2.2));
+      colliderBoxes.push(box);
+    } else if (kind === 2) {
+      // Concrete pipe lying on its side
+      const geo = new THREE.CylinderGeometry(0.85, 0.85, 2.1, 12, 1, true);
+      geo.rotateZ(Math.PI / 2);
+      const m = new THREE.Mesh(geo, concreteMat);
+      m.position.y = 0.85;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      piece.add(m);
+      const box = new THREE.Box3();
+      box.setFromCenterAndSize(piece.position, new THREE.Vector3(2.3, 1.8, 2.3));
+      colliderBoxes.push(box);
+    } else {
+      // Tire stack — low walkable obstacle, no collider
+      for (let s = 0; s < 3; s++) {
+        const geo = new THREE.TorusGeometry(0.55, 0.22, 8, 14);
+        geo.rotateX(Math.PI / 2);
+        const m = new THREE.Mesh(geo, tireMat);
+        m.position.y = 0.24 + s * 0.42;
+        m.castShadow = true;
+        piece.add(m);
+      }
+    }
+
+    root.add(piece);
+    placed++;
+  }
 }
 
 export class EnvironmentBuilder {
@@ -236,8 +373,9 @@ export class EnvironmentBuilder {
       const winFrameMat = new THREE.MeshStandardMaterial({ color: 0x1c1e24, roughness: 0.5 });
       const glassGeo = new THREE.BoxGeometry(1.2, 1.8, 0.08);
 
-      const litAmberGlassMat = new THREE.MeshBasicMaterial({ color: 0xffdf88 });
-      const litBlueGlassMat = new THREE.MeshBasicMaterial({ color: 0x93c5fd });
+      // HDR emissive glass (values > 1.0) so the bloom pass makes lit rooms glow
+      const litAmberGlassMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 2.4, 1.1) });
+      const litBlueGlassMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.1, 1.9, 3.4) });
       const darkGlassMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.4 });
 
       for (let wy = 6.5; wy < height - 2; wy += 4.2) {
@@ -358,7 +496,7 @@ export class EnvironmentBuilder {
       bGroup.add(antenna);
 
       const beaconGeo = new THREE.SphereGeometry(0.15, 8, 8);
-      const beaconMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+      const beaconMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(4.0, 0.35, 0.35) });
       const beacon = new THREE.Mesh(beaconGeo, beaconMat);
       beacon.position.set(frontFaceX * 0.4, height + 6.2, -depth * 0.2);
       bGroup.add(beacon);
@@ -425,7 +563,7 @@ export class EnvironmentBuilder {
 
       const floodLens = new THREE.Mesh(
         new THREE.CylinderGeometry(0.32, 0.32, 0.1, 12),
-        new THREE.MeshBasicMaterial({ color: 0xe0f2fe })
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 3.2, 4.2) })
       );
       floodLens.rotateX(Math.PI / 2);
       floodLens.position.set(flX, 10.5, -86.0);
@@ -924,11 +1062,33 @@ export class EnvironmentBuilder {
       isActivated: false,
     });
 
+    // ==========================================
+    // HURDLE FIELDS — scattered cover across the outer districts
+    // ==========================================
+    const districtKeepOut: { x: number; z: number; r: number }[] = [
+      { x: 0, z: -78, r: 9 },  // operator insertion point
+      { x: 0, z: 16, r: 7 },   // emergency generator
+      { x: 0, z: 48, r: 9 },   // safehouse
+    ];
+    createHurdleField(root, colliderBoxes, {
+      minX: -92, maxX: -24, minZ: -125, maxZ: 130, keepOut: districtKeepOut, count: 22, seed: 101,
+    });
+    createHurdleField(root, colliderBoxes, {
+      minX: 24, maxX: 92, minZ: -125, maxZ: 130, keepOut: districtKeepOut, count: 22, seed: 202,
+    });
+    createHurdleField(root, colliderBoxes, {
+      minX: -60, maxX: 60, minZ: -138, maxZ: -95, keepOut: districtKeepOut, count: 12, seed: 303,
+    });
+    createHurdleField(root, colliderBoxes, {
+      minX: -60, maxX: 60, minZ: 60, maxZ: 135, keepOut: districtKeepOut, count: 12, seed: 404,
+    });
+
     return {
       sceneGroup: root,
       colliderBoxes,
       interactiveObjects,
       explosiveBarrels,
+      bounds: { minX: -105, maxX: 105, minZ: -145, maxZ: 145 },
       safehouseZone: {
         position: new THREE.Vector3(0, 0, 48),
         radius: 4.5,
@@ -1001,9 +1161,9 @@ export class EnvironmentBuilder {
       fogColor: 0x8cbfe8, // High-visibility daylight sky fog
       fogDensity: 0.006,
       ambientColor: 0xb2d6f2, // Bright daylight ambient light
-      ambientIntensity: 1.4,
+      ambientIntensity: 1.0,
       directionalColor: 0xfff7e6, // Warm clear midday sunlight
-      directionalIntensity: 2.5,
+      directionalIntensity: 2.3,
       directionalPos: [35, 65, 20],
     };
   }

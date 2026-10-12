@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { WeaponTypeKey } from '../types';
 import { ProceduralTextures } from '../textures/ProceduralTextures';
+import { HeavyWeaponModel } from './HeavyWeaponModel';
 
 export class WeaponModelFactory {
   private static gunMetalMat: THREE.MeshStandardMaterial | null = null;
@@ -102,6 +103,15 @@ export class WeaponModelFactory {
       case 'sniper':
         gunMesh = this.createSniper();
         break;
+      case 'rocket':
+        gunMesh = this.createRocket();
+        break;
+      case 'katana':
+        gunMesh = this.createKatana();
+        break;
+      case 'airstrike':
+        gunMesh = this.createAirstrikeTablet();
+        break;
       case 'pistol':
       default:
         gunMesh = this.createPistol();
@@ -115,10 +125,293 @@ export class WeaponModelFactory {
     group.add(hands);
 
     // Tactical first-person weapon positioning
-    group.position.set(0.23, -0.21, -0.44);
-    group.scale.set(0.85, 0.85, 0.85);
+    if (type === 'airstrike') {
+      // Tablet held flat with both hands at chest level, screen facing player
+      group.position.set(0.08, -0.18, -0.35);
+      group.rotation.set(-Math.PI / 3.5, 0, 0); // Tilt screen toward player's eyes
+      group.scale.set(0.75, 0.75, 0.75);
+    } else {
+      group.position.set(0.23, -0.21, -0.44);
+      group.scale.set(0.85, 0.85, 0.85);
+    }
 
     return group;
+  }
+
+  // ==========================================
+  // 7. HAVOC RPG-X ROCKET LAUNCHER
+  // ==========================================
+  private static createRocket(): THREE.Group {
+    const root = new THREE.Group();
+    root.name = 'gun_geometry';
+
+    // Launch tube (fiber-wound composite)
+    const tubeGeo = new THREE.CylinderGeometry(0.058, 0.058, 0.66, 16);
+    tubeGeo.rotateX(Math.PI / 2);
+    const tube = new THREE.Mesh(tubeGeo, this.gunMetalMat!);
+    tube.position.set(0, 0.02, -0.18);
+    root.add(tube);
+
+    // Heat-shield rings at both ends
+    for (const zPos of [-0.47, 0.12]) {
+      const ringGeo = new THREE.CylinderGeometry(0.068, 0.068, 0.045, 16);
+      ringGeo.rotateX(Math.PI / 2);
+      const ring = new THREE.Mesh(ringGeo, this.darkSteelMat!);
+      ring.position.set(0, 0.02, zPos);
+      root.add(ring);
+    }
+
+    // Rocket warhead peeking out of the muzzle (armed & visible)
+    const warheadGeo = new THREE.ConeGeometry(0.045, 0.14, 14);
+    warheadGeo.rotateX(-Math.PI / 2);
+    const warheadMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.4, metalness: 0.5 });
+    const warhead = new THREE.Mesh(warheadGeo, warheadMat);
+    warhead.position.set(0, 0.02, -0.53);
+    root.add(warhead);
+
+    // Rear exhaust bell (backblast area)
+    const bellGeo = new THREE.CylinderGeometry(0.075, 0.05, 0.09, 16, 1, true);
+    bellGeo.rotateX(Math.PI / 2);
+    const bell = new THREE.Mesh(bellGeo, this.darkSteelMat!);
+    bell.position.set(0, 0.02, 0.17);
+    root.add(bell);
+
+    // Optical sight rail + reflex sight block
+    const railGeo = new THREE.BoxGeometry(0.03, 0.02, 0.3);
+    const rail = new THREE.Mesh(railGeo, this.darkSteelMat!);
+    rail.position.set(0, 0.085, -0.12);
+    root.add(rail);
+    const sightGeo = new THREE.BoxGeometry(0.05, 0.055, 0.09);
+    const sight = new THREE.Mesh(sightGeo, this.tacticalGripMat!);
+    sight.position.set(0, 0.12, -0.16);
+    root.add(sight);
+    const lensGeo = new THREE.CircleGeometry(0.018, 12);
+    const lens = new THREE.Mesh(lensGeo, this.holoGlassMat!);
+    lens.position.set(0, 0.128, -0.115);
+    root.add(lens);
+
+    // Forward grip & pistol grip
+    const fGripGeo = new THREE.BoxGeometry(0.036, 0.1, 0.05);
+    const fGrip = new THREE.Mesh(fGripGeo, this.tacticalGripMat!);
+    fGrip.position.set(0, -0.07, -0.3);
+    root.add(fGrip);
+    const pGripGeo = new THREE.BoxGeometry(0.04, 0.12, 0.06);
+    pGripGeo.rotateX(0.3);
+    const pGrip = new THREE.Mesh(pGripGeo, this.tacticalGripMat!);
+    pGrip.position.set(0, -0.08, 0.02);
+    root.add(pGrip);
+
+    // Stenciled hazard stripes on the tube
+    for (let i = 0; i < 3; i++) {
+      const stripeGeo = new THREE.BoxGeometry(0.062, 0.014, 0.05);
+      const stripe = new THREE.Mesh(stripeGeo, new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.5 }));
+      stripe.position.set(0, 0.02, -0.32 + i * 0.075);
+      root.add(stripe);
+    }
+
+    return root;
+  }
+
+  // ==========================================
+  // 8. ONI KATANA (folded-steel field blade)
+  // ==========================================
+  private static createKatana(): THREE.Group {
+    const root = new THREE.Group();
+    root.name = 'gun_geometry';
+
+    // Bright folded-steel blade (three angled segments for the signature curve)
+    const bladeMat = new THREE.MeshStandardMaterial({
+      color: 0xc8ccd4,
+      metalness: 0.98,
+      roughness: 0.12,
+    });
+    let z = -0.18;
+    let tilt = 0;
+    const segLengths = [0.3, 0.3, 0.28];
+    for (const len of segLengths) {
+      const segGeo = new THREE.BoxGeometry(0.014, 0.028, len);
+      const seg = new THREE.Mesh(segGeo, bladeMat);
+      seg.position.set(0, 0.02 + tilt * 0.09, z - len / 2);
+      seg.rotation.x = tilt * 0.22;
+      root.add(seg);
+      z -= len * Math.cos(tilt * 0.22);
+      tilt += 1;
+    }
+
+    // Hammer-forged edge highlight (thin bright strip along the blade)
+    const edgeGeo = new THREE.BoxGeometry(0.006, 0.008, 0.82);
+    const edge = new THREE.Mesh(edgeGeo, new THREE.MeshStandardMaterial({
+      color: 0xffffff, metalness: 1.0, roughness: 0.05,
+    }));
+    edge.position.set(0, 0.008, -0.62);
+    edge.rotation.x = 0.045;
+    root.add(edge);
+
+    // Tsuba (oval hand guard)
+    const tsubaGeo = new THREE.CylinderGeometry(0.045, 0.045, 0.008, 18);
+    tsubaGeo.rotateX(Math.PI / 2);
+    const tsubaMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1e, metalness: 0.9, roughness: 0.35 });
+    const tsuba = new THREE.Mesh(tsubaGeo, tsubaMat);
+    tsuba.position.set(0, 0.015, -0.13);
+    root.add(tsuba);
+
+    // Tsuka (handle) with ito wrap rings
+    const tsukaGeo = new THREE.BoxGeometry(0.026, 0.034, 0.22);
+    const tsuka = new THREE.Mesh(tsukaGeo, this.tacticalGripMat!);
+    tsuka.position.set(0, 0.012, -0.005);
+    root.add(tsuka);
+    for (let i = 0; i < 5; i++) {
+      const wrapGeo = new THREE.BoxGeometry(0.03, 0.038, 0.012);
+      const wrap = new THREE.Mesh(wrapGeo, new THREE.MeshStandardMaterial({ color: 0x2f2f38, roughness: 0.9 }));
+      wrap.position.set(0, 0.012, 0.08 - i * 0.045);
+      root.add(wrap);
+    }
+
+    // Kashira (pommel cap)
+    const kashiraGeo = new THREE.BoxGeometry(0.03, 0.038, 0.02);
+    const kashira = new THREE.Mesh(kashiraGeo, tsubaMat);
+    kashira.position.set(0, 0.012, 0.105);
+    root.add(kashira);
+
+    // Blade gleam light catch — subtle emissive line down the spine
+    const spineGeo = new THREE.BoxGeometry(0.004, 0.004, 0.8);
+    const spine = new THREE.Mesh(spineGeo, new THREE.MeshBasicMaterial({ color: 0x8fb3c7, transparent: true, opacity: 0.35 }));
+    spine.position.set(0, 0.036, -0.6);
+    spine.rotation.x = 0.045;
+    root.add(spine);
+
+    // Held angled like a low guard stance
+    root.rotation.z = -0.35;
+    root.rotation.x = 0.18;
+
+    return root;
+  }
+
+  // ==========================================
+  // 9. ORDINANCE TABLET (Air Strike Designator)
+  // ==========================================
+  private static createAirstrikeTablet(): THREE.Group {
+    const root = new THREE.Group();
+    root.name = 'gun_geometry';
+
+    // Tactical tablet body - rugged military design
+    const tabletGeo = new THREE.BoxGeometry(0.18, 0.012, 0.25);
+    const tabletMat = new THREE.MeshStandardMaterial({
+      color: 0x1a1f26,
+      metalness: 0.7,
+      roughness: 0.35,
+    });
+    const tablet = new THREE.Mesh(tabletGeo, tabletMat);
+    tablet.position.set(0, 0.03, -0.02);
+    root.add(tablet);
+
+    // Reinforced corners
+    for (const [x, z] of [[-0.08, -0.11], [0.08, -0.11], [-0.08, 0.11], [0.08, 0.11]]) {
+      const cornerGeo = new THREE.BoxGeometry(0.02, 0.018, 0.02);
+      const corner = new THREE.Mesh(cornerGeo, this.darkSteelMat!);
+      corner.position.set(x, 0.03, z);
+      root.add(corner);
+    }
+
+    // Screen area (dark glass)
+    const screenGeo = new THREE.BoxGeometry(0.14, 0.01, 0.19);
+    const screenMat = new THREE.MeshPhysicalMaterial({
+      color: 0x0a1628,
+      transmission: 0.2,
+      opacity: 0.9,
+      transparent: true,
+      roughness: 0.05,
+      ior: 1.52,
+    });
+    const screen = new THREE.Mesh(screenGeo, screenMat);
+    screen.position.set(0, 0.04, -0.02);
+    root.add(screen);
+
+    // Holographic map display on screen (emissive)
+    const holoGeo = new THREE.BoxGeometry(0.13, 0.005, 0.18);
+    const holoMat = new THREE.MeshBasicMaterial({
+      color: 0x00ffaa,
+      transparent: true,
+      opacity: 0.4,
+    });
+    const holo = new THREE.Mesh(holoGeo, holoMat);
+    holo.position.set(0, 0.043, -0.02);
+    root.add(holo);
+
+    // Target reticle on screen (pulsing)
+    const reticleGeo = new THREE.RingGeometry(0.015, 0.025, 16);
+    const reticleMat = new THREE.MeshBasicMaterial({
+      color: 0xff4400,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.8,
+    });
+    const reticle = new THREE.Mesh(reticleGeo, reticleMat);
+    reticle.position.set(0, 0.046, -0.02);
+    reticle.rotation.x = -Math.PI / 2;
+    root.add(reticle);
+
+    // Antenna on top-right corner
+    const antennaGeo = new THREE.CylinderGeometry(0.004, 0.004, 0.12, 8);
+    const antenna = new THREE.Mesh(antennaGeo, this.darkSteelMat!);
+    antenna.position.set(0.07, 0.1, 0.09);
+    root.add(antenna);
+    // Antenna tip light
+    const antTipGeo = new THREE.SphereGeometry(0.006, 8, 8);
+    const antTipMat = new THREE.MeshBasicMaterial({ color: 0xff2200 });
+    const antTip = new THREE.Mesh(antTipGeo, antTipMat);
+    antTip.position.set(0.07, 0.165, 0.09);
+    root.add(antTip);
+
+    // Side grip/handle
+    const gripGeo = new THREE.BoxGeometry(0.025, 0.11, 0.04);
+    const grip = new THREE.Mesh(gripGeo, this.tacticalGripMat!);
+    grip.position.set(-0.11, -0.02, -0.02);
+    root.add(grip);
+
+    // Strap attachment points
+    for (const zPos of [-0.1, 0.1]) {
+      const strapGeo = new THREE.TorusGeometry(0.012, 0.005, 6, 12);
+      const strap = new THREE.Mesh(strapGeo, this.darkSteelMat!);
+      strap.position.set(-0.11, -0.02, zPos);
+      strap.rotation.x = Math.PI / 2;
+      root.add(strap);
+    }
+
+    // Charge indicator LEDs (4 dots on side)
+    for (let i = 0; i < 4; i++) {
+      const ledGeo = new THREE.SphereGeometry(0.006, 8, 8);
+      const ledMat = new THREE.MeshBasicMaterial({ color: 0x00ffaa });
+      const led = new THREE.Mesh(ledGeo, ledMat);
+      led.position.set(0.11, 0.02, -0.08 + i * 0.05);
+      led.name = `charge_led_${i}`;
+      root.add(led);
+    }
+
+    // Tactical carry handle on top
+    const handleGeo = new THREE.TorusGeometry(0.025, 0.006, 8, 16);
+    const handle = new THREE.Mesh(handleGeo, this.darkSteelMat!);
+    handle.position.set(0, 0.06, -0.12);
+    handle.rotation.x = Math.PI / 2;
+    root.add(handle);
+
+    // Emissive charge status line
+    const chargeBarGeo = new THREE.BoxGeometry(0.1, 0.004, 0.01);
+    const chargeBarMat = new THREE.MeshBasicMaterial({
+      color: 0x00ffaa,
+      transparent: true,
+      opacity: 0.7,
+    });
+    const chargeBar = new THREE.Mesh(chargeBarGeo, chargeBarMat);
+    chargeBar.position.set(0, 0.046, 0.11);
+    chargeBar.name = 'charge_bar';
+    root.add(chargeBar);
+
+    // Held like a tablet - angled slightly down
+    root.rotation.x = 0.15;
+    root.rotation.z = 0.05;
+
+    return root;
   }
 
   // ==========================================
@@ -410,6 +703,13 @@ export class WeaponModelFactory {
     const root = new THREE.Group();
     root.name = 'gun_geometry';
 
+    // High-poly authored model when available (streams in the background)
+    const gltfGun = HeavyWeaponModel.getGroup();
+    if (gltfGun) {
+      root.add(gltfGun);
+      return root;
+    }
+
     // Massive steel receiver
     const blockGeo = new THREE.BoxGeometry(0.088, 0.11, 0.42);
     const block = new THREE.Mesh(blockGeo, this.gunMetalMat!);
@@ -545,8 +845,10 @@ export class WeaponModelFactory {
 
     // Left Hand (Support glove)
     const leftHandGroup = new THREE.Group();
-    if (type === 'pistol') {
+    if (type === 'pistol' || type === 'katana') {
       leftHandGroup.position.set(-0.012, -0.095, 0.06);
+    } else if (type === 'rocket') {
+      leftHandGroup.position.set(-0.005, -0.075, -0.31);
     } else {
       leftHandGroup.position.set(-0.02, -0.01, -0.2);
     }

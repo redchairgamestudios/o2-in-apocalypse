@@ -685,4 +685,68 @@ export const CAMPAIGN_MISSIONS: MissionConfig[] = [
       },
     ],
   },
+
+// =========================================================================
+// MISSION 11: HUMANITY'S LAST REQUEST — RESCUE & COLLECT
+// =========================================================================
+// Post-campaign side operation in the apocalyptic city: extract stranded
+// survivors before the swarm converges, and secure virus research samples
+// for the lab. Every objective anchor is beacon-marked in-world.
+{
+  id: 11,
+  title: 'MISSION 11: HUMANITY\u2019S LAST REQUEST',
+  subTitle: 'Apocalyptic City \u2014 Rescue Operation',
+  district: 'SECTOR-00 GROUND ZERO',
+  difficultyRecommended: 'HARD',
+  briefing: 'Civilians are still alive in the quarantine city. Escort four survivors to the evacuation point and recover three virus samples for the lab. Beacons mark every objective \u2014 expect heavy resistance at each site.',
+  baseRewardCredits: 4200,
+  objectives: [
+    {
+      id: 'm11_obj1',
+      title: 'RESEARCH: COLLECT 3 VIRUS SAMPLES',
+      description: 'Follow the amber beacons to glowing research cases. Walk over them to secure the samples.',
+      type: 'collect_samples',
+      targetCount: 3,
+      currentCount: 0,
+    },
+    {
+      id: 'm11_obj2',
+      title: 'CIVILIANS: RESCUE 4 SURVIVORS',
+      description: 'Cyan beacons mark stranded civilians waving for help. Get close and press [E] to rescue each one.',
+      type: 'rescue_survivors',
+      targetCount: 4,
+      currentCount: 0,
+    },
+    {
+      id: 'm11_obj3',
+      title: 'EVACUATE AT THE HELIPORT',
+      description: 'All packages secured. Follow the green beacon to the helicopter and finish the operation.',
+      type: 'reach_zone',
+      targetPosition: [6, 0, 96],
+      targetRadius: 5.0,
+    },
+  ],
+  waves: [
+    {
+      waveNumber: 1,
+      enemies: [
+        { type: 'runner', count: 6 },
+        { type: 'walker', count: 8 },
+        { type: 'spitter', count: 2 },
+      ],
+      spawnDelay: 8.0,
+    },
+    {
+      waveNumber: 2,
+      enemies: [
+        { type: 'brute', count: 2 },
+        { type: 'runner', count: 8 },
+        { type: 'screamer', count: 2 },
+        { type: 'crawler', count: 4 },
+      ],
+      spawnDelay: 10.0,
+    },
+  ],
+},
 ];
+

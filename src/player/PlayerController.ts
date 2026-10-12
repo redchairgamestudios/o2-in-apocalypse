@@ -3,6 +3,8 @@ import { WeaponConfig, WeaponTypeKey, HitResult, WeaponUpgradeLevel } from '../t
 import { WEAPON_DEFINITIONS, UPGRADE_TIERS } from '../data/weapons';
 import { WeaponModelFactory } from '../models/WeaponModels';
 import { ParticleSystem } from '../effects/ParticleSystem';
+import { GunEffects } from '../effects/GunEffects';
+import { PostProcessing } from '../effects/PostProcessing';
 import { soundFx } from '../audio/SoundEffects';
 
 export interface PlayerInput {
@@ -37,7 +39,8 @@ export class PlayerController {
   public flashlightFlood: THREE.SpotLight;
   public flashlightFill: THREE.PointLight;
   public flashlightTarget: THREE.Object3D;
-  public isFlashlightOn: boolean = true;
+  /** Flashlight starts OFF every mission — [F] raises it. */
+  public isFlashlightOn: boolean = false;
   public hasPowerfulFlashlight: boolean = false;
 
   public hp: number = 100;
@@ -52,6 +55,7 @@ export class PlayerController {
   public isExhausted: boolean = false;
   public isSprinting: boolean = false;
   public staminaRegenTimer: number = 0;
+  public shoveCooldown: number = 0;
   private pantingSoundTimer: number = 0;
 
   // Weapon State
@@ -71,88 +75,137 @@ export class PlayerController {
   private bobTime: number = 0;
   private isAiming: boolean = false;
 
+  // Weapon presentation state (sprint pose, landing dip, idle breathing)
+  private sprintPose: number = 0;        // 0..1 blended weapon lowered pose
+  private landDip: number = 0;           // impulse on hard landings
+  private prevVerticalVelocity: number = 0;
+  private wasGrounded: boolean = true;
+  private cameraDipOffset: number = 0;   // short camera y dip on landing
+  private recoilPitch: number = 0;       // temporary camera kick, recovers automatically
+
+  // Muzzle dynamic light (world-lighting gunflash attached to camera)
+  public muzzleLight: THREE.PointLight;
+
   // Raycaster
   public raycaster: THREE.Raycaster = new THREE.Raycaster();
   public onGunshot?: (origin: THREE.Vector3, soundRadius: number) => void;
+  public onLaunchRocket?: (origin: THREE.Vector3, dir: THREE.Vector3) => void;
+  /** Ordinance tablet raised: request satellite targeting mode (turret uplink required). */
+  public onLaunchAirstrike?: () => void;
+
+  // Per-map movement bounds (set on environment load; district default)
+  public mapBounds: { minX: number; maxX: number; minZ: number; maxZ: number } = {
+    minX: -103, maxX: 103, minZ: -141, maxZ: 141,
+  };
+
+  public setMapBounds(b: { minX: number; maxX: number; minZ: number; maxZ: number }) {
+    this.mapBounds = b;
+  }
+
+  // Katana cleave swing state (1 -> 0 drives the slash animation)
+  private meleeSwingT: number = 0;
+
+  /** True while aiming down the sniper's scope (drives the HUD scope overlay). */
+  get isScoped(): boolean {
+    return this.isAiming && this.equippedWeaponKey === 'sniper';
+  }
 
   constructor() {
     this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 250);
     this.camera.position.copy(this.position);
     this.camera.rotation.order = 'YXZ';
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    // Layer 1 hosts the first-person weapon: world lights below opt into it,
+    // the flashlight does NOT — so the beam never blows out the gun model
+    this.camera.layers.enable(1);
 
-    // High-powered tactical weapon-mounted flashlight (Primary penetrating spotlight)
-    this.flashlight = new THREE.SpotLight(0xfffaed, 14.0, 95, Math.PI / 4.4, 0.35, 1.0);
-    this.flashlight.position.set(0.2, -0.15, -0.1);
-    this.flashlight.castShadow = true;
-    this.flashlight.shadow.mapSize.width = 512;
-    this.flashlight.shadow.mapSize.height = 512;
-    this.flashlight.shadow.bias = -0.002;
+    // Tactical weapon-mounted flashlight. Origin pushed PAST the muzzle so the
+    // cone's near-field never washes over the gun or the ground at the player's
+    // feet, and aimed well below the horizon so the pool lands on the floor
+    // ahead — a flat aim washes out walls and white props at eye level.
+    // Intensity kept moderate — high values blow out white/albedo surfaces.
+    this.flashlight = new THREE.SpotLight(0xfff6e0, 0, 85, Math.PI / 4.6, 0.6, 1.4);
+    this.flashlight.position.set(0.16, -0.24, -1.4);
+    // No shadow casting: a shadow-mapped spotlight re-renders the whole scene
+    // from the beam's view EVERY frame — the single most expensive setting in
+    // the game. The moonlight shadow already grounds every prop and actor.
+    this.flashlight.castShadow = false;
 
     this.flashlightTarget = new THREE.Object3D();
-    this.flashlightTarget.position.set(0, 0, -12);
+    this.flashlightTarget.position.set(0, -3.0, -12);
     this.camera.add(this.flashlightTarget);
     this.flashlight.target = this.flashlightTarget;
     this.camera.add(this.flashlight);
 
     // Secondary wide-angle peripheral flood beam for doorframes, alleys & close quarters
-    this.flashlightFlood = new THREE.SpotLight(0xfff3d6, 5.5, 45, Math.PI / 2.6, 0.85, 1.2);
-    this.flashlightFlood.position.set(0.2, -0.15, -0.1);
+    this.flashlightFlood = new THREE.SpotLight(0xfff3d6, 0, 40, Math.PI / 3.2, 0.9, 1.5);
+    this.flashlightFlood.position.set(0.16, -0.24, -1.4);
     this.flashlightFlood.target = this.flashlightTarget;
     this.camera.add(this.flashlightFlood);
 
     // Ambient forward fill point light to illuminate ground, curbs, and nearby obstacles
-    this.flashlightFill = new THREE.PointLight(0xffecd1, 2.5, 14, 1.4);
-    this.flashlightFill.position.set(0, -0.1, -1.2);
+    this.flashlightFill = new THREE.PointLight(0xffecd1, 0, 10, 1.6);
+    this.flashlightFill.position.set(0, -0.35, -2.4);
     this.camera.add(this.flashlightFill);
 
     this.weaponContainer = new THREE.Group();
     this.camera.add(this.weaponContainer);
 
+    // Muzzle flash world light — brief barrel glow, kept subtle so aim stays readable
+    this.muzzleLight = new THREE.PointLight(0xffc873, 0, 16, 2.0);
+    this.muzzleLight.position.set(0.22, -0.14, -0.9);
+    this.muzzleLight.layers.enable(1); // the gun's own flash DOES light the gun
+    this.camera.add(this.muzzleLight);
+
     this.setWeapon('pistol', { damageLevel: 0, magLevel: 0, fireRateLevel: 0, reloadLevel: 0 });
+  }
+
+  /** First-person weapon lives on render layer 1 — excluded from flashlight lighting. */
+  private applyWeaponLayers() {
+    this.weaponContainer.traverse((obj) => obj.layers.set(1));
   }
 
   public setPowerfulFlashlight(enabled: boolean) {
     this.hasPowerfulFlashlight = enabled;
     if (enabled) {
       // 3,500-lumen Mil-Spec Heavy Searchlight configuration
-      this.flashlight.distance = 180;
-      this.flashlight.angle = Math.PI / 3.6;
-      this.flashlight.penumbra = 0.45;
+      this.flashlight.distance = 150;
+      this.flashlight.angle = Math.PI / 3.8;
+      this.flashlight.penumbra = 0.5;
       this.flashlight.color.setHex(0xffffff);
 
-      this.flashlightFlood.distance = 80;
-      this.flashlightFlood.angle = Math.PI / 2.2;
-      this.flashlightFlood.penumbra = 0.9;
+      this.flashlightFlood.distance = 70;
+      this.flashlightFlood.angle = Math.PI / 2.8;
+      this.flashlightFlood.penumbra = 0.92;
 
-      this.flashlightFill.distance = 24;
+      this.flashlightFill.distance = 18;
     } else {
       // Standard issue tactical light
-      this.flashlight.distance = 95;
-      this.flashlight.angle = Math.PI / 4.4;
-      this.flashlight.penumbra = 0.35;
-      this.flashlight.color.setHex(0xfffaed);
+      this.flashlight.distance = 85;
+      this.flashlight.angle = Math.PI / 4.6;
+      this.flashlight.penumbra = 0.5;
+      this.flashlight.color.setHex(0xfff6e0);
 
-      this.flashlightFlood.distance = 45;
-      this.flashlightFlood.angle = Math.PI / 2.6;
-      this.flashlightFlood.penumbra = 0.85;
+      this.flashlightFlood.distance = 40;
+      this.flashlightFlood.angle = Math.PI / 3.2;
+      this.flashlightFlood.penumbra = 0.9;
 
-      this.flashlightFill.distance = 14;
+      this.flashlightFill.distance = 10;
     }
 
     if (this.isFlashlightOn) {
-      this.flashlight.intensity = enabled ? 32.0 : 14.0;
-      this.flashlightFlood.intensity = enabled ? 12.0 : 5.5;
-      this.flashlightFill.intensity = enabled ? 5.5 : 2.5;
+      this.flashlight.intensity = enabled ? 8.0 : 3.2;
+      this.flashlightFlood.intensity = enabled ? 3.2 : 1.2;
+      this.flashlightFill.intensity = enabled ? 1.4 : 0.55;
     }
   }
 
   public toggleFlashlight(): boolean {
     this.isFlashlightOn = !this.isFlashlightOn;
     const isHeavy = this.hasPowerfulFlashlight;
-    this.flashlight.intensity = this.isFlashlightOn ? (isHeavy ? 32.0 : 14.0) : 0;
-    this.flashlightFlood.intensity = this.isFlashlightOn ? (isHeavy ? 12.0 : 5.5) : 0;
-    this.flashlightFill.intensity = this.isFlashlightOn ? (isHeavy ? 5.5 : 2.5) : 0;
+    this.flashlight.intensity = this.isFlashlightOn ? (isHeavy ? 8.0 : 3.2) : 0;
+    this.flashlightFlood.intensity = this.isFlashlightOn ? (isHeavy ? 3.2 : 1.2) : 0;
+    this.flashlightFill.intensity = this.isFlashlightOn ? (isHeavy ? 1.4 : 0.55) : 0;
     soundFx.playFlashlightClick();
     return this.isFlashlightOn;
   }
@@ -161,6 +214,7 @@ export class PlayerController {
     this.equippedWeaponKey = key;
     this.weaponConfig = WEAPON_DEFINITIONS[key];
     this.upgrades = upgrades;
+    this.meleeSwingT = 0;
 
     // Remove old mesh
     if (this.currentWeaponMesh) {
@@ -170,6 +224,7 @@ export class PlayerController {
     // Build new mesh
     this.currentWeaponMesh = WeaponModelFactory.createWeaponMesh(key);
     this.weaponContainer.add(this.currentWeaponMesh);
+    this.applyWeaponLayers();
 
     // Calculate upgraded mag size
     const bonusMag = Math.round(this.weaponConfig.baseMagSize * (this.upgrades.magLevel * UPGRADE_TIERS.magBonusPerLevel));
@@ -185,6 +240,7 @@ export class PlayerController {
     colliders: THREE.Box3[],
     zombieHitboxes: THREE.Object3D[],
     explosiveBarrels: { mesh: THREE.Mesh; position: THREE.Vector3; hp: number; exploded: boolean }[],
+    envMeshes: THREE.Object3D[],
     onHitZombie: (result: HitResult) => void,
     onExplodeBarrel: (barrel: { position: THREE.Vector3 }) => void
   ) {
@@ -195,19 +251,23 @@ export class PlayerController {
     }
 
     // 1. Look rotation (Euler order YXZ ensures pitch is always local & never inverts regardless of yaw)
-    const adsSensitivityMult = input.aimDownSights ? 0.62 : 1.0;
+    // Scoped sniper aim needs heavily damped sensitivity for precision tracking
+    const adsSensitivityMult = input.aimDownSights ? (this.equippedWeaponKey === 'sniper' ? 0.26 : 0.62) : 1.0;
     this.yaw -= input.lookDeltaX * adsSensitivityMult;
     this.pitch = Math.max(-Math.PI * 0.44, Math.min(Math.PI * 0.44, this.pitch + input.lookDeltaY * adsSensitivityMult));
 
+    // Fire kick recovers smoothly instead of permanently climbing the aim
+    this.recoilPitch = THREE.MathUtils.clamp(this.recoilPitch, -0.14, 0.14);
     this.camera.rotation.order = 'YXZ';
-    this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    this.camera.rotation.set(this.pitch + this.recoilPitch, this.yaw, 0, 'YXZ');
+    this.recoilPitch = THREE.MathUtils.lerp(this.recoilPitch, 0, Math.min(1, delta * 9));
 
     // 2. Movement & Stamina Management
     const wantsSprint = input.sprint && input.forward > 0 && !input.aimDownSights;
 
     if (wantsSprint && !this.isExhausted && this.stamina > 0) {
       this.isSprinting = true;
-      this.stamina = Math.max(0, this.stamina - delta * 24.0);
+      this.stamina = Math.max(0, this.stamina - delta * 19.0);
       this.staminaRegenTimer = 0.8;
       if (this.stamina <= 0) {
         this.stamina = 0;
@@ -222,9 +282,9 @@ export class PlayerController {
         this.staminaRegenTimer -= delta;
       } else {
         const isMoving = Math.abs(input.forward) > 0.05 || Math.abs(input.strafe) > 0.05;
-        const regenRate = isMoving ? 16.0 : 30.0;
+        const regenRate = isMoving ? 18.0 : 30.0;
         this.stamina = Math.min(this.maxStamina, this.stamina + regenRate * delta);
-        if (this.isExhausted && this.stamina >= 25.0) {
+        if (this.isExhausted && this.stamina >= 20.0) {
           this.isExhausted = false;
         }
       }
@@ -329,11 +389,12 @@ export class PlayerController {
       }
     }
 
-    // Fully accessible perimeter boundaries (expanded across all vast battlegrounds)
-    if (allowedX && nextPos.x > -85 && nextPos.x < 85) {
+    // Fully accessible perimeter boundaries — sized to the ACTIVE map
+    const mb = this.mapBounds;
+    if (allowedX && nextPos.x > mb.minX && nextPos.x < mb.maxX) {
       this.position.x = nextPos.x;
     }
-    if (allowedZ && nextPos.z > -115 && nextPos.z < 115) {
+    if (allowedZ && nextPos.z > mb.minZ && nextPos.z < mb.maxZ) {
       this.position.z = nextPos.z;
     }
 
@@ -412,12 +473,21 @@ export class PlayerController {
 
     // Head bobbing calculation (only when on ground)
     const bobOffset = this.isGrounded ? Math.sin(this.bobTime) * (isSprinting ? 0.08 : 0.04) : 0;
-    this.camera.position.set(this.position.x, this.position.y + 1.7 + bobOffset, this.position.z);
+    this.camera.position.set(
+      this.position.x,
+      this.position.y + 1.7 + bobOffset + this.cameraDipOffset,
+      this.position.z
+    );
 
-    // 3. Aim Down Sights (ADS)
-    this.isAiming = input.aimDownSights;
-    const targetFov = this.isAiming ? 50 : 72;
-    this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFov, delta * 10);
+    // 3. Aim Down Sights (ADS) — the sniper's scope zooms deep into the world.
+    // The scope drops the moment a reload is required (mag empty or reloading):
+    // the operator is busy seating fresh rounds, not looking down the optic.
+    const reloadRequired = this.equippedWeaponKey === 'sniper' && (this.isReloading || this.currentMag === 0);
+    this.isAiming = input.aimDownSights && !reloadRequired;
+    const targetFov = this.isAiming
+      ? (this.equippedWeaponKey === 'sniper' ? 18 : 50)
+      : 72;
+    this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFov, delta * (this.equippedWeaponKey === 'sniper' ? 14 : 10));
     this.camera.updateProjectionMatrix();
 
     // 4. Weapon Sway & Recoil Recovery (gun lags naturally behind camera rotation)
@@ -429,25 +499,78 @@ export class PlayerController {
     this.recoilOffset.lerp(new THREE.Vector3(0, 0, 0), delta * 9);
     this.recoilRotation.x = THREE.MathUtils.lerp(this.recoilRotation.x, 0, delta * 9);
 
+    // Muzzle flash light decays almost instantly for a snappy gunflash
+    this.muzzleLight.intensity *= Math.pow(0.000001, delta);
+
+    // Landing impact dip (weapon & camera absorb the fall)
+    if (this.isGrounded && !this.wasGrounded && this.prevVerticalVelocity < -6.0) {
+      this.landDip = Math.min(1.0, -this.prevVerticalVelocity / 13.0);
+      this.cameraDipOffset = -0.09 * this.landDip;
+    }
+    this.wasGrounded = this.isGrounded;
+    this.prevVerticalVelocity = this.verticalVelocity;
+    this.landDip = Math.max(0, this.landDip - delta * 3.2);
+    this.cameraDipOffset = THREE.MathUtils.lerp(this.cameraDipOffset, 0, delta * 9);
+
     if (this.currentWeaponMesh) {
-      // Default lower-right or centered ADS
-      const defaultX = this.isAiming ? 0 : 0.24;
-      const defaultY = this.isAiming ? -0.15 : -0.22;
-      const defaultZ = this.isAiming ? -0.36 : -0.45;
+      // Sprint pose: weapon lowers & cants inward while sprinting
+      const targetSprint = isSprinting && this.velocity.lengthSq() > 1.0 ? 1 : 0;
+      this.sprintPose = THREE.MathUtils.lerp(this.sprintPose, targetSprint, delta * 7);
 
-      this.currentWeaponMesh.position.set(
-        defaultX + this.swayOffset.x + this.recoilOffset.x,
-        defaultY + this.swayOffset.y + this.recoilOffset.y,
-        defaultZ + this.recoilOffset.z
-      );
+      // Air Strike tablet has unique hold pose - don't apply standard gun positioning
+      if (this.equippedWeaponKey === 'airstrike') {
+        // Tablet held flat with both hands at chest level, screen facing player
+        const idleBreath = this.isGrounded ? Math.sin(this.bobTime * 0.45) * 0.0035 : 0;
+        this.currentWeaponMesh.position.set(
+          0.08 + this.swayOffset.x + this.recoilOffset.x,
+          -0.18 + this.swayOffset.y + this.recoilOffset.y - this.landDip * 0.09 + idleBreath,
+          -0.35 + this.recoilOffset.z
+        );
+        this.currentWeaponMesh.rotation.set(
+          -Math.PI / 3.5 + this.recoilRotation.x,
+          -this.swayOffset.x * 0.5,
+          0
+        );
+      } else {
+        // Default lower-right or centered ADS; scoped sniper drops the gun
+        // out of the optic circle so the scope overlay is unobstructed
+        const scoped = this.isScoped;
+        const defaultX = scoped ? 0.12 : this.isAiming ? 0 : 0.24;
+        const defaultY = scoped ? -0.44 : this.isAiming ? -0.15 : -0.22;
+        const defaultZ = scoped ? -0.34 : this.isAiming ? -0.36 : -0.45;
 
-      this.currentWeaponMesh.rotation.x = this.recoilRotation.x;
-      this.currentWeaponMesh.rotation.y = -this.swayOffset.x * 0.5;
+        // Idle breathing keeps the weapon alive even standing still
+        const idleBreath = this.isGrounded ? Math.sin(this.bobTime * 0.45) * 0.0035 : 0;
+
+        this.currentWeaponMesh.position.set(
+          defaultX + this.swayOffset.x + this.recoilOffset.x + this.sprintPose * 0.07,
+          defaultY + this.swayOffset.y + this.recoilOffset.y - this.sprintPose * 0.055 - this.landDip * 0.09 + idleBreath,
+          defaultZ + this.recoilOffset.z + this.sprintPose * 0.06
+        );
+
+        this.currentWeaponMesh.rotation.x =
+          this.recoilRotation.x - this.sprintPose * 0.28 - this.landDip * 0.22;
+        this.currentWeaponMesh.rotation.y = -this.swayOffset.x * 0.5 + this.sprintPose * 0.5;
+        this.currentWeaponMesh.rotation.z = this.sprintPose * -0.45;
+
+        // Katana cleave: wide diagonal slash riding over the base pose
+        if (this.meleeSwingT > 0) {
+          this.meleeSwingT = Math.max(0, this.meleeSwingT - delta * 3.4);
+          const swing = Math.sin((1 - this.meleeSwingT) * Math.PI);
+          this.currentWeaponMesh.rotation.z -= swing * 2.1;
+          this.currentWeaponMesh.rotation.x += swing * 0.55;
+          this.currentWeaponMesh.position.x -= swing * 0.3;
+          this.currentWeaponMesh.position.z += swing * 0.2;
+        }
+      }
     }
 
     // 5. Weapon Firing & Reloading
     if (this.fireCooldown > 0) {
       this.fireCooldown -= delta;
+    }
+    if (this.shoveCooldown > 0) {
+      this.shoveCooldown -= delta;
     }
 
     // Reload logic
@@ -456,9 +579,12 @@ export class PlayerController {
       const effectiveReloadTime = Math.max(0.6, this.weaponConfig.baseReloadTime * (1 - reloadSpeedBonus));
       this.reloadProgress += delta / effectiveReloadTime;
 
-      // Animate weapon dropping down during reload
+      // Animate weapon dropping & corkscrewing during reload
       if (this.currentWeaponMesh) {
-        this.currentWeaponMesh.position.y -= Math.sin(this.reloadProgress * Math.PI) * 0.15;
+        const reloadPhase = Math.sin(this.reloadProgress * Math.PI);
+        this.currentWeaponMesh.position.y -= reloadPhase * 0.15;
+        this.currentWeaponMesh.rotation.z = reloadPhase * 0.55;
+        this.currentWeaponMesh.rotation.x += reloadPhase * 0.3;
       }
 
       if (this.reloadProgress >= 1.0) {
@@ -483,7 +609,7 @@ export class PlayerController {
     // Shooting
     if (input.shoot && !this.isReloading && this.fireCooldown <= 0) {
       if (this.currentMag > 0) {
-        this.executeFire(zombieHitboxes, explosiveBarrels, onHitZombie, onExplodeBarrel);
+        this.executeFire(zombieHitboxes, explosiveBarrels, envMeshes, onHitZombie, onExplodeBarrel);
       } else {
         soundFx.playDryFire();
         const effectiveRpm = this.weaponConfig.fireRateRpm * (1 + this.upgrades.fireRateLevel * UPGRADE_TIERS.fireRateBonusPerLevel);
@@ -495,9 +621,65 @@ export class PlayerController {
   private executeFire(
     zombieHitboxes: THREE.Object3D[],
     explosiveBarrels: { mesh: THREE.Mesh; position: THREE.Vector3; hp: number; exploded: boolean }[],
+    envMeshes: THREE.Object3D[],
     onHitZombie: (result: HitResult) => void,
     onExplodeBarrel: (barrel: { position: THREE.Vector3 }) => void
   ) {
+    // Air Strike: raise the ordinance tablet into satellite targeting mode.
+    // Requires an active Sentry Turret uplink — handled by AirStrikeManager.
+    if (this.equippedWeaponKey === 'airstrike') {
+      // Rate-limit arming attempts so holding the trigger doesn't spam
+      this.fireCooldown = 0.6;
+      if (this.onLaunchAirstrike) {
+        this.onLaunchAirstrike();
+      } else {
+        soundFx.playDryFire();
+      }
+      return;
+    }
+
+    // Melee weapon (katana): infinite ammo, wide cleaving arc — no hitscan
+    if (this.weaponConfig.melee) {
+      this.executeMeleeSwing(zombieHitboxes, onHitZombie);
+      return;
+    }
+
+    // Rocket launcher: hand off to the projectile system, big recoil
+    if (this.weaponConfig.projectile && this.onLaunchRocket) {
+      this.currentMag -= 1;
+      const rocketRpm = this.weaponConfig.fireRateRpm * (1 + this.upgrades.fireRateLevel * UPGRADE_TIERS.fireRateBonusPerLevel);
+      this.fireCooldown = 60 / rocketRpm;
+
+      const rocketDir = new THREE.Vector3();
+      this.camera.getWorldDirection(rocketDir);
+      const spread = this.isAiming ? this.weaponConfig.spread * 0.4 : this.weaponConfig.spread;
+      rocketDir.x += (Math.random() - 0.5) * spread;
+      rocketDir.y += (Math.random() - 0.5) * spread;
+      rocketDir.normalize();
+
+      const muzzleWorld = this.camera.localToWorld(new THREE.Vector3(0.22, -0.16, -1.0));
+      this.onLaunchRocket(muzzleWorld, rocketDir);
+
+      // Heavy shoulder-fired recoil: weapon kick + sharp camera punch
+      this.recoilOffset.z += this.weaponConfig.recoil;
+      this.recoilRotation.x += this.weaponConfig.recoil * 0.5;
+      this.recoilPitch += this.weaponConfig.recoil * 0.5;
+      this.muzzleLight.intensity = 16;
+
+      // Auto-reload the tube right after launch — single-shot weapon, the
+      // operator should never have to press R between rockets
+      const maxMag = this.weaponConfig.baseMagSize + Math.round(this.weaponConfig.baseMagSize * (this.upgrades.magLevel * UPGRADE_TIERS.magBonusPerLevel));
+      if (this.currentMag < maxMag && this.reserveAmmo > 0 && !this.isReloading) {
+        this.isReloading = true;
+        this.reloadProgress = 0;
+        soundFx.playReloadSequence();
+      }
+
+      // Launch report is loud — the whole street hears it
+      this.onGunshot?.(this.position.clone(), 45);
+      return;
+    }
+
     this.currentMag -= 1;
 
     // RPM calculation with upgrades
@@ -532,7 +714,22 @@ export class PlayerController {
     this.recoilOffset.z += recoilAmount * 0.8;
     this.recoilOffset.y += recoilAmount * 0.2;
     this.recoilRotation.x += recoilAmount * 0.4;
-    this.pitch += recoilAmount * 0.08; // Subtle camera rise
+    this.recoilPitch += recoilAmount * 0.42; // Temporary camera rise (auto-recovers)
+
+    // Muzzle flash: modest world light at the barrel (bright enough to read,
+    // never enough to white out the frame) + pooled sprite + slight bloom punch
+    const muzzlePower =
+      this.equippedWeaponKey === 'heavy' ? 1.2
+      : this.equippedWeaponKey === 'sniper' ? 1.15
+      : this.equippedWeaponKey === 'shotgun' ? 1.1
+      : this.equippedWeaponKey === 'rifle' ? 1.0
+      : 0.85;
+    this.muzzleLight.intensity = 13 * muzzlePower;
+    const cameraForward = new THREE.Vector3();
+    this.camera.getWorldDirection(cameraForward);
+    const muzzleWorld = this.camera.localToWorld(new THREE.Vector3(0.22, -0.16, -1.0));
+    GunEffects.spawnMuzzleFlash(muzzleWorld, cameraForward, muzzlePower);
+    PostProcessing.punchBloom(0.06 * muzzlePower);
 
     // Acoustic gunshot noise (attracts nearby zombies)
     if (this.onGunshot) {
@@ -550,6 +747,8 @@ export class PlayerController {
 
     // Pellets count (8 for shotgun, 1 for others)
     const pellets = this.weaponConfig.pellets || 1;
+    const maxTracers = pellets > 1 ? 2 : 1;
+    const tracerThickness = this.equippedWeaponKey === 'sniper' || this.equippedWeaponKey === 'heavy' ? 1.6 : 1.0;
 
     for (let p = 0; p < pellets; p++) {
       // Spread calculation
@@ -558,6 +757,7 @@ export class PlayerController {
       const spreadY = (Math.random() - 0.5) * spread;
 
       this.raycaster.setFromCamera(new THREE.Vector2(spreadX, spreadY), this.camera);
+      const rayDir = this.raycaster.ray.direction;
 
       // Check explosive barrels
       const barrelMeshes = explosiveBarrels.filter((b) => !b.exploded).map((b) => b.mesh);
@@ -567,25 +767,39 @@ export class PlayerController {
         const hit = barrelHits[0];
         const barrelObj = explosiveBarrels.find((b) => b.mesh === hit.object);
         if (barrelObj && !barrelObj.exploded) {
+          if (p < maxTracers) GunEffects.spawnTracer(muzzleWorld, hit.point, tracerThickness);
           barrelObj.hp -= baseDmg;
           if (barrelObj.hp <= 0) {
             barrelObj.exploded = true;
             barrelObj.mesh.visible = false;
             soundFx.playExplosion();
             ParticleSystem.spawnExplosion(barrelObj.position);
+            PostProcessing.punchBloom(0.9);
             onExplodeBarrel({ position: barrelObj.position });
           } else {
             ParticleSystem.spawnSparks(hit.point, hit.normal || new THREE.Vector3(0, 1, 0));
+            GunEffects.spawnImpactFlash(hit.point);
           }
         }
         continue;
       }
 
+      // Real environment impact point (walls, ground, props)
+      const envHits = envMeshes.length > 0
+        ? this.raycaster.intersectObjects(envMeshes, true)
+        : [];
+
       // Check zombies
       const zombieHits = this.raycaster.intersectObjects(zombieHitboxes, false);
+      const zombieHit = zombieHits.length > 0 && zombieHits[0].distance < this.weaponConfig.range ? zombieHits[0] : null;
+      const envHit = envHits.length > 0 && envHits[0].distance < this.weaponConfig.range ? envHits[0] : null;
 
-      if (zombieHits.length > 0 && zombieHits[0].distance < this.weaponConfig.range) {
-        const hit = zombieHits[0];
+      // Whichever is closer decides the bullet's true endpoint
+      const zombieCloser = zombieHit && (!envHit || zombieHit.distance < envHit.distance);
+
+      if (zombieHit && zombieCloser) {
+        const hit = zombieHit;
+        if (p < maxTracers) GunEffects.spawnTracer(muzzleWorld, hit.point, tracerThickness);
         const hitZone = (hit.object.userData?.hitZone || 'TORSO') as 'HEAD' | 'TORSO' | 'LIMB' | 'WEAKPOINT';
         const zombieId = hit.object.userData?.zombieId;
 
@@ -623,18 +837,117 @@ export class PlayerController {
         onHitZombie({
           hit: true,
           zone: hitZone,
+          limb: hit.object.userData?.limb as 'ARM_L' | 'ARM_R' | 'LEG_L' | 'LEG_R' | undefined,
           damage: totalDamage,
           isFatal: false, // will be evaluated by ZombieManager
           targetId: zombieId,
           point: [hit.point.x, hit.point.y, hit.point.z],
         });
+      } else if (envHit) {
+        // Bullet struck real world geometry: impact sparks, flash & tracer to exact point
+        if (p < maxTracers) GunEffects.spawnTracer(muzzleWorld, envHit.point, tracerThickness);
+        const impactNormal = envHit.face
+          ? envHit.face.normal.clone().transformDirection(envHit.object.matrixWorld)
+          : rayDir.clone().negate();
+        ParticleSystem.spawnSparks(envHit.point, impactNormal);
+        GunEffects.spawnImpactFlash(envHit.point);
+        // Blood-streak residue occasionally clings to struck vertical surfaces
+        // (walls, barriers, props) — anchored to the real hit point/normal and
+        // only on opaque geometry, never on fences/light beams
+        const struckMat = (envHit.object as THREE.Mesh).material as (THREE.Material & { opacity?: number }) | undefined;
+        const opaqueSurface = Boolean(struckMat) && !struckMat!.transparent && (struckMat!.opacity ?? 1) >= 0.95;
+        if (Math.abs(impactNormal.y) < 0.5 && Math.random() < 0.12 && opaqueSurface) {
+          ParticleSystem.spawnWallBlood(envHit.point, impactNormal, 1.5, true);
+        }
       } else {
-        // Wall spark / dust
-        const shootDir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-        const wallPoint = this.camera.position.clone().addScaledVector(shootDir, Math.min(30, this.weaponConfig.range));
-        ParticleSystem.spawnSparks(wallPoint, new THREE.Vector3(0, 1, 0));
+        // Shot into the void — tracer fades into the distance
+        const endPoint = this.camera.position
+          .clone()
+          .addScaledVector(rayDir, Math.min(this.weaponConfig.range, 90));
+        if (p < maxTracers) GunEffects.spawnTracer(muzzleWorld, endPoint, tracerThickness);
       }
     }
+  }
+
+  /**
+   * Katana cleave: a silent wide arc that hits EVERY zombie in the fan —
+   * no ammo, no muzzle flash, minimal acoustic footprint.
+   */
+  private executeMeleeSwing(
+    zombieHitboxes: THREE.Object3D[],
+    onHitZombie: (result: HitResult) => void
+  ) {
+    const effectiveRpm = this.weaponConfig.fireRateRpm * (1 + this.upgrades.fireRateLevel * UPGRADE_TIERS.fireRateBonusPerLevel);
+    this.fireCooldown = 60 / effectiveRpm;
+    this.meleeSwingT = 1;
+
+    const damageMultiplier = 1 + this.upgrades.damageLevel * UPGRADE_TIERS.damageMultiplierPerLevel;
+    const dmg = Math.round(this.weaponConfig.baseDamage * damageMultiplier);
+
+    soundFx.playShove(); // blade whoosh
+
+    const camForward = new THREE.Vector3();
+    this.camera.getWorldDirection(camForward);
+    const flatFwd = new THREE.Vector3(camForward.x, 0, camForward.z).normalize();
+    const origin = this.position.clone().add(new THREE.Vector3(0, 1.1, 0));
+
+    let hits = 0;
+    for (const hb of zombieHitboxes) {
+      const zombieId = hb.userData?.zombieId;
+      if (!zombieId) continue;
+      const hitPos = new THREE.Vector3();
+      hb.getWorldPosition(hitPos);
+
+      const toZombie = hitPos.clone().sub(origin);
+      const dist = toZombie.length();
+      if (dist > this.weaponConfig.range + 0.4) continue;
+      toZombie.y = 0;
+      toZombie.normalize();
+      if (flatFwd.dot(toZombie) < 0.35) continue; // ~70° half-angle cleave fan
+
+      hits++;
+      ParticleSystem.spawnBlood(hitPos, camForward, false, false, true);
+      const floorPos = hitPos.clone();
+      floorPos.y = 0.02;
+      ParticleSystem.spawnBloodDecal(floorPos, 1.4);
+
+      onHitZombie({
+        hit: true,
+        zone: 'TORSO',
+        damage: dmg,
+        isFatal: false,
+        targetId: zombieId,
+        point: [hitPos.x, hitPos.y, hitPos.z],
+      });
+    }
+
+    if (hits > 0) {
+      soundFx.playHitMarker();
+    }
+
+    // A blade whisper carries far less than a gunshot
+    this.onGunshot?.(this.position.clone(), 7);
+    // Slight lunge into the swing
+    this.recoilOffset.z -= 0.12;
+  }
+
+  /**
+   * Melee shove (V): weapon butt knockback that breaks out of swarms.
+   * Returns true when the shove actually goes off (cooldown + stamina ok).
+   */
+  public tryShove(): boolean {
+    if (this.isDead || this.shoveCooldown > 0) return false;
+    if (this.stamina < 8) return false;
+
+    this.stamina = Math.max(0, this.stamina - 8);
+    this.staminaRegenTimer = 0.7;
+    this.shoveCooldown = 1.4;
+
+    // Weapon thrust animation rides the recoil spring
+    this.recoilOffset.z -= 0.3;
+    this.recoilRotation.x -= 0.35;
+    soundFx.playShove();
+    return true;
   }
 
   public takeDamage(amount: number, attackerPos: THREE.Vector3) {
@@ -645,6 +958,14 @@ export class PlayerController {
     this.staminaRegenTimer = 1.0;
     this.damageFlashTime = 0.4;
     soundFx.playPlayerHurt();
+
+    // Physical knockback: a strike shoves the player away from the attacker,
+    // so being surrounded pushes you apart instead of pinning you in place
+    const pushDir = new THREE.Vector3(this.position.x - attackerPos.x, 0, this.position.z - attackerPos.z);
+    if (pushDir.lengthSq() > 0.0001) {
+      pushDir.normalize();
+      this.velocity.addScaledVector(pushDir, 2.8);
+    }
 
     // Dynamic blood splatter on player screen / visor
     ParticleSystem.addScreenBlood(Math.min(0.6, amount * 0.02 + 0.18));
@@ -694,13 +1015,16 @@ export class PlayerController {
     this.staminaRegenTimer = 0;
     this.isDead = false;
     this.damageFlashTime = 0;
+    this.recoilPitch = 0;
+    this.sprintPose = 0;
+    this.landDip = 0;
     this.isReloading = false;
     this.currentMag = this.weaponConfig.baseMagSize;
     this.reserveAmmo = this.weaponConfig.maxReserveAmmo;
     if (this.flashlight) {
-      this.flashlight.intensity = this.isFlashlightOn ? 14.0 : 0;
-      this.flashlightFlood.intensity = this.isFlashlightOn ? 5.5 : 0;
-      this.flashlightFill.intensity = this.isFlashlightOn ? 2.5 : 0;
+      this.flashlight.intensity = this.isFlashlightOn ? (this.hasPowerfulFlashlight ? 20.0 : 9.0) : 0;
+      this.flashlightFlood.intensity = this.isFlashlightOn ? (this.hasPowerfulFlashlight ? 7.0 : 3.5) : 0;
+      this.flashlightFill.intensity = this.isFlashlightOn ? (this.hasPowerfulFlashlight ? 3.0 : 1.5) : 0;
     }
   }
 }

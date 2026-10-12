@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { soundFx } from '../audio/SoundEffects';
 import { ParticleSystem } from '../effects/ParticleSystem';
+import { GunEffects } from '../effects/GunEffects';
 import { ZombieManager } from '../zombies/ZombieManager';
 import { ZombieInstance } from '../models/ZombieModel';
 
@@ -40,6 +41,10 @@ export class TurretManager {
 
   public static getTurrets(): DefenseTurret[] {
     return this.turrets;
+  }
+
+  public static hasActiveTurret(): boolean {
+    return this.turrets.length > 0;
   }
 
   public static deployTurret(position: THREE.Vector3, playerFacing: number | THREE.Vector3): boolean {
@@ -213,6 +218,10 @@ export class TurretManager {
           t.head.localToWorld(muzzlePos);
 
           ParticleSystem.spawnSparks(muzzlePos, new THREE.Vector3(0, 1, 0));
+
+          const tracerDir = new THREE.Vector3().subVectors(targetWorldPos, muzzlePos).normalize();
+          GunEffects.spawnMuzzleFlash(muzzlePos, tracerDir, 0.65);
+          GunEffects.spawnTracer(muzzlePos, targetWorldPos, 0.8);
 
           // Apply damage to zombie: 24 damage per bullet
           zombieManager.applyDamage(

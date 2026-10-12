@@ -659,6 +659,43 @@ export class ProceduralTextures {
     return tex;
   }
 
+  // Charred Explosive Scorch Mark (blast residue — never blood-colored)
+  public static getScorchMark(): THREE.CanvasTexture {
+    if (this.cache.has('scorch_mark')) return this.cache.get('scorch_mark')!;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d')!;
+    ctx.clearRect(0, 0, 256, 256);
+
+    // Sooty blast center
+    const grad = ctx.createRadialGradient(128, 128, 8, 128, 128, 116);
+    grad.addColorStop(0, 'rgba(10,9,8,0.95)');
+    grad.addColorStop(0.4, 'rgba(22,19,16,0.82)');
+    grad.addColorStop(0.72, 'rgba(36,31,26,0.45)');
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(128, 128, 112, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Radial soot streaks blasted outward
+    for (let i = 0; i < 55; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = Math.random() * 98 + 22;
+      const rad = Math.random() * 9 + 2;
+      ctx.fillStyle = `rgba(18,15,13,${0.22 + Math.random() * 0.38})`;
+      ctx.beginPath();
+      ctx.arc(128 + Math.cos(angle) * dist, 128 + Math.sin(angle) * dist, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    this.cache.set('scorch_mark', tex);
+    return tex;
+  }
+
   // High-velocity Directional Blood Splatter
   public static getBloodSplatter(): THREE.CanvasTexture {
     if (this.cache.has('blood_splatter')) return this.cache.get('blood_splatter')!;

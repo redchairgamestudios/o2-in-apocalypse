@@ -2,7 +2,7 @@ import React from 'react';
 import { GameSettings } from '../types';
 import { SaveManager } from '../core/SaveManager';
 import { soundFx } from '../audio/SoundEffects';
-import { Settings as SettingsIcon, X, Volume2, Smartphone, Monitor, RotateCcw } from 'lucide-react';
+import { Settings as SettingsIcon, X, Volume2, Smartphone, Monitor, RotateCcw, Gauge } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface SettingsModalProps {
@@ -191,7 +191,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Graphics Quality */}
-        <div className="bg-zinc-900/80 p-5 rounded-lg border border-zinc-800 flex items-center justify-between">
+        <div className="bg-zinc-900/80 p-5 rounded-lg border border-zinc-800 flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="font-teko text-xl text-zinc-200">RENDER GRAPHICS QUALITY</div>
             <div className="text-xs font-military text-zinc-500">Optimizes dynamic shadows and particle density</div>
@@ -214,18 +214,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
 
+        {/* Performance & Debug */}
+        <div className="bg-zinc-900/80 p-5 rounded-lg border border-zinc-800 space-y-4">
+          <div className="flex items-center gap-2 font-teko text-xl text-zinc-200">
+            <Gauge className="w-5 h-5 text-cyan-500" />
+            <span>PERFORMANCE & DEBUG</span>
+          </div>
+
+          <div className="flex items-center justify-between border-t border-zinc-800 pt-3">
+            <div>
+              <div className="text-xs font-military text-zinc-300">SHOW FPS COUNTER</div>
+              <div className="text-[11px] font-military text-zinc-500">Displays real-time frame rate in top-left corner</div>
+            </div>
+            <button
+              onClick={() => update({ showFps: !settings.showFps })}
+              className={`px-3 py-1 rounded font-teko text-base font-bold ${
+                settings.showFps ? 'bg-green-600 text-white' : 'bg-zinc-800 text-zinc-500'
+              }`}
+            >
+              {settings.showFps ? 'ENABLED' : 'DISABLED'}
+            </button>
+          </div>
+        </div>
+
         {/* PWA App Installation */}
         <div className="bg-zinc-900/80 p-4 rounded-lg border border-zinc-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <img
               src="/app-logo.png"
-              alt="Dead Zone Trigger"
+              alt="O² in Apocalypse"
               className="w-12 h-12 object-contain rounded-lg border border-zinc-700 bg-black/90 p-1 shadow"
               referrerPolicy="no-referrer"
             />
             <div>
               <div className="font-teko text-xl text-zinc-100 font-bold tracking-wide">
-                DEAD ZONE: TRIGGER (PWA)
+                O² IN APOCALYPSE (PWA)
               </div>
               <div className="text-xs font-military text-zinc-400">
                 Install as standalone app for offline play and full-screen FPS immersion
@@ -237,7 +260,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Reset Progress */}
-        <div className="pt-4 flex justify-between items-center">
+        <div className="pt-4 flex flex-wrap justify-between items-center gap-3">
           <button
             onClick={handleReset}
             className="flex items-center gap-2 text-xs font-military text-red-500 hover:text-red-400 bg-red-950/40 hover:bg-red-950/70 border border-red-800/80 px-4 py-2 rounded transition-all"

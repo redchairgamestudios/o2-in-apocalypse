@@ -116,21 +116,21 @@ export const BuyCoinsModal: React.FC<BuyCoinsModalProps> = ({
     <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col p-4 sm:p-6 md:p-8 pointer-events-auto overflow-y-auto select-none touch-manipulation">
       <div className="max-w-6xl w-full mx-auto flex flex-col flex-1 pb-8">
         {/* Header Bar */}
-        <div className="flex justify-between items-start pb-4 border-b border-zinc-800 gap-4">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-wrap justify-between items-start pb-4 border-b border-zinc-800 gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0">
               <Coins className="w-6 h-6 text-amber-400" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-mono text-[10px] text-emerald-400 uppercase tracking-widest font-bold flex items-center gap-1">
                   <ShieldCheck className="w-3.5 h-3.5" /> FREE TESTING PROTOCOL ACTIVE
                 </span>
-                <span className="text-[9px] font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/40">
+                <span className="text-[9px] font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/40 short:hidden">
                   NO REAL MONEY REQUIRED
                 </span>
               </div>
-              <h2 className="font-teko text-3xl sm:text-4xl font-bold tracking-wide text-white leading-none mt-0.5">
+              <h2 className="font-teko text-2xl sm:text-4xl short:text-xl font-bold tracking-wide text-white leading-none mt-0.5">
                 QUARANTINE SUPPLY REQUISITION & COIN STORE
               </h2>
             </div>
@@ -138,11 +138,11 @@ export const BuyCoinsModal: React.FC<BuyCoinsModalProps> = ({
 
           <div className="flex items-center gap-3 shrink-0">
             {/* Live Credits Counter */}
-            <div className="flex items-center gap-2 bg-zinc-950 border border-amber-500/60 px-3.5 py-1.5 rounded-lg shadow-inner">
-              <DollarSign className="w-5 h-5 text-amber-400" />
+            <div className="flex items-center gap-2 bg-zinc-950 border border-amber-500/60 px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-lg shadow-inner">
+              <DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" />
               <div className="flex flex-col items-end">
-                <span className="text-[9px] font-mono text-zinc-400 uppercase tracking-wider font-semibold leading-tight">CURRENT BALANCE</span>
-                <span className="font-teko text-2xl font-bold text-amber-400 leading-none">
+                <span className="text-[9px] font-mono text-zinc-400 uppercase tracking-wider font-semibold leading-tight short:hidden">CURRENT BALANCE</span>
+                <span className="font-teko text-xl sm:text-2xl short:text-lg font-bold text-amber-400 leading-none">
                   {saveData.credits.toLocaleString()}
                 </span>
               </div>

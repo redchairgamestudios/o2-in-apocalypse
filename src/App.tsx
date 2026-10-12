@@ -13,10 +13,23 @@ import { ZombieManager } from './zombies/ZombieManager';
 import { MissionManager } from './missions/MissionManager';
 import { ParticleSystem } from './effects/ParticleSystem';
 import { WeatherSystem } from './effects/WeatherSystem';
+import { PostProcessing } from './effects/PostProcessing';
+import { SkyDome } from './effects/SkyDome';
+import { GunEffects } from './effects/GunEffects';
+import { GltfZombieFactory } from './models/GltfZombieFactory';
+import { ColossusModel } from './models/ColossusModel';
+import { HeavyWeaponModel } from './models/HeavyWeaponModel';
+import { HelicopterAsset } from './models/HelicopterAsset';
+import { AllyModelFactory } from './models/AllyModel';
+import { NavCollision } from './core/NavCollision';
+import { MissionEntityManager } from './tactical/MissionEntityManager';
+import { ReflectionProbe } from './effects/ReflectionProbe';
 import { soundFx } from './audio/SoundEffects';
 import { HelicopterCutscene } from './cutscene/HelicopterCutscene';
 import { GrenadeManager } from './tactical/GrenadeManager';
+import { RocketManager } from './tactical/RocketManager';
 import { TurretManager } from './tactical/TurretManager';
+import { AirStrikeManager } from './tactical/AirStrikeManager';
 import { AllySoldier } from './tactical/AllySoldier';
 import { DroneManager } from './tactical/DroneManager';
 import { Mission10EndingCutscene } from './cutscene/Mission10EndingCutscene';
@@ -33,14 +46,16 @@ import { BuyCoinsModal } from './ui/BuyCoinsModal';
 import { MobileControls } from './ui/MobileControls';
 import { OrientationWarning } from './ui/OrientationWarning';
 import { DebugOverlay } from './ui/DebugOverlay';
+import { CompanyIntro } from './ui/CompanyIntro';
+import { LoadingScreen } from './ui/LoadingScreen';
 import { Coins } from 'lucide-react';
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Central Game State
-  const [screen, setScreen] = useState<GameScreen>('MENU');
-  const screenRef = useRef<GameScreen>('MENU');
+  const [screen, setScreen] = useState<GameScreen>('COMPANY_INTRO');
+  const screenRef = useRef<GameScreen>('COMPANY_INTRO');
   const [isPointerLocked, setIsPointerLocked] = useState<boolean>(false);
   const lastLockExitTimeRef = useRef<number>(0);
   const [saveData, setSaveData] = useState<PlayerSaveData>(SaveManager.load());
@@ -87,7 +102,7 @@ export default function App() {
   };
   const [isMobile, setIsMobile] = useState<boolean>(false);
   const [isSprinting, setIsSprinting] = useState<boolean>(false);
-  const [isFlashlightOn, setIsFlashlightOn] = useState<boolean>(true);
+  const [isFlashlightOn, setIsFlashlightOn] = useState<boolean>(false);
   const [showDebug, setShowDebug] = useState<boolean>(false);
   const [fps, setFps] = useState<number>(60);
   const [hitFeedback, setHitFeedback] = useState<{ hit: boolean; isHeadshot: boolean; timestamp: number }>({
@@ -97,6 +112,10 @@ export default function App() {
   });
   const [endMissionStats, setEndMissionStats] = useState<{ isVictory: boolean; stats: GameStats } | null>(null);
   const [killFeed, setKillFeed] = useState<KillFeedEntry[]>([]);
+
+  // Loading Screen State
+  const [showLoadingScreen, setShowLoadingScreen] = useState<boolean>(false);
+  const [loadingMissionId, setLoadingMissionId] = useState<number>(0);
 
   const addKillFeedEntry = (
     victim: string,
@@ -131,7 +150,7 @@ export default function App() {
 
   // Lobby soundtrack management: plays during menus/arsenal/lobby, stops during combat
   useEffect(() => {
-    const isLobby = ['MENU', 'MISSIONS', 'ARSENAL', 'SETTINGS', 'SPECIMEN', 'BUY_COINS'].includes(screen);
+    const isLobby = ['MENU', 'MISSIONS', 'ARSENAL', 'SETTINGS', 'SPECIMEN', 'BUY_COINS', 'COMPANY_INTRO'].includes(screen);
     if (isLobby) {
       soundFx.startLobbyMusic();
     } else {
@@ -144,6 +163,33 @@ export default function App() {
     };
   }, [screen]);
 
+  // Apply graphics quality changes live: post FX, resolution scale & shadow resolution
+  useEffect(() => {
+    const quality = saveData.settings.graphicsQuality;
+    PostProcessing.setQuality(quality);
+    const renderer = rendererRef.current;
+    if (renderer) {
+      // Touch devices render at 1.0 always: tablets/phones run 2K+ panels
+      // where even 1.25x halves the GPU fragment budget for no visible gain.
+      const touch = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+      renderer.setPixelRatio(touch ? 1.0 : Math.min(window.devicePixelRatio, quality === 'HIGH' ? 1.25 : 1.0));
+    }
+    const moon = moonLightRef.current;
+    if (moon) {
+      const res = quality === 'HIGH' ? 1024 : 512;
+      if (moon.shadow.mapSize.width !== res) {
+        moon.shadow.mapSize.width = res;
+        moon.shadow.mapSize.height = res;
+        if (moon.shadow.map) {
+          moon.shadow.map.dispose();
+          (moon.shadow as unknown as { map: THREE.WebGLRenderTarget | null }).map = null;
+        }
+      }
+      // Shadow map is static (env-only casters): re-render once after resize
+      moon.shadow.needsUpdate = true;
+    }
+  }, [saveData.settings.graphicsQuality]);
+
   // Core Engine Instances (persisted across renders)
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -151,6 +197,7 @@ export default function App() {
   const zombieManagerRef = useRef<ZombieManager | null>(null);
   const missionManagerRef = useRef<MissionManager | null>(null);
   const envResultRef = useRef<EnvironmentResult | null>(null);
+  const objectiveMarkersRef = useRef<THREE.Group[]>([]);
   const cutsceneRef = useRef<HelicopterCutscene | null>(null);
   const ambientLightRef = useRef<THREE.AmbientLight | null>(null);
   const moonLightRef = useRef<THREE.DirectionalLight | null>(null);
@@ -209,28 +256,8 @@ export default function App() {
     // 1. Create Scene & Atmospheric Fog
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x182436); // Atmospheric twilight slate navy
-    scene.fog = new THREE.Fog(0x182436, 50, 190); // Clear nearby, soft horizon depth
+    scene.fog = new THREE.Fog(0x182436, 45, 300); // Clear mid-range, only distant haze
     sceneRef.current = scene;
-
-    // Distant Atmospheric Starfield in Upper Sky
-    const starsGeo = new THREE.BufferGeometry();
-    const starCount = 350;
-    const starPositions = new Float32Array(starCount * 3);
-    for (let i = 0; i < starCount * 3; i += 3) {
-      starPositions[i] = (Math.random() - 0.5) * 260;
-      starPositions[i + 1] = Math.random() * 85 + 35; // high in the sky above buildings
-      starPositions[i + 2] = (Math.random() - 0.5) * 260;
-    }
-    starsGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-    const starsMat = new THREE.PointsMaterial({
-      color: 0xdbeafe,
-      size: 1.4,
-      sizeAttenuation: true,
-      transparent: true,
-      opacity: 0.85,
-    });
-    const starField = new THREE.Points(starsGeo, starsMat);
-    scene.add(starField);
 
     // 2. WebGL Renderer
     const renderer = new THREE.WebGLRenderer({
@@ -240,12 +267,14 @@ export default function App() {
     const initW = containerRef.current.clientWidth || window.innerWidth || 800;
     const initH = containerRef.current.clientHeight || window.innerHeight || 600;
     renderer.setSize(initW, initH);
-    const dpr = Math.min(window.devicePixelRatio, saveData.settings.graphicsQuality === 'HIGH' ? 1.5 : 1.0);
+    const dpr = ('ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024)
+      ? 1.0 // touch devices: native 1x — high-DPI panels melt the fragment budget
+      : Math.min(window.devicePixelRatio, saveData.settings.graphicsQuality === 'HIGH' ? 1.25 : 1.0);
     renderer.setPixelRatio(dpr);
     renderer.shadowMap.enabled = saveData.settings.graphicsQuality !== 'LOW';
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.35;
+    renderer.toneMappingExposure = 1.12;
     rendererRef.current = renderer;
 
     renderer.domElement.style.display = 'block';
@@ -256,25 +285,38 @@ export default function App() {
 
     containerRef.current.appendChild(renderer.domElement);
 
+    // Sky-matched reflections: gradient sky + sun disc baked per mission, so
+    // metals pick up coherent sky-colored highlights — never white studio panels
+    ReflectionProbe.applyEnvironment(renderer, scene, {
+      fogColor: 0x182436,
+      directionalColor: 0xdbe8ff,
+      directionalPos: [25, 55, 15],
+    });
+
     // 3. Atmospheric Lighting (Multi-tier illumination ensures pristine visibility)
-    const ambientLight = new THREE.AmbientLight(0x404e63, 0.95);
+    const ambientLight = new THREE.AmbientLight(0x404e63, 0.72);
+    ambientLight.layers.enable(1); // light the first-person weapon too
     scene.add(ambientLight);
     ambientLightRef.current = ambientLight;
 
-    const hemiLight = new THREE.HemisphereLight(0x8da7cc, 0x222b38, 1.25);
+    const hemiLight = new THREE.HemisphereLight(0x8da7cc, 0x222b38, 0.85);
+    hemiLight.layers.enable(1);
     scene.add(hemiLight);
 
     const moonLight = new THREE.DirectionalLight(0xdbe8ff, 1.85);
     moonLight.position.set(25, 55, 15);
     moonLight.castShadow = true;
-    moonLight.shadow.mapSize.width = 1024;
-    moonLight.shadow.mapSize.height = 1024;
+    const shadowRes = saveData.settings.graphicsQuality === 'HIGH' ? 1024 : 512;
+    moonLight.shadow.mapSize.width = shadowRes;
+    moonLight.shadow.mapSize.height = shadowRes;
     moonLight.shadow.camera.near = 5;
     moonLight.shadow.camera.far = 160;
     moonLight.shadow.camera.left = -40;
     moonLight.shadow.camera.right = 40;
     moonLight.shadow.camera.top = 50;
     moonLight.shadow.camera.bottom = -50;
+    moonLight.shadow.bias = -0.0004;
+    moonLight.layers.enable(1);
     scene.add(moonLight);
     moonLightRef.current = moonLight;
 
@@ -282,6 +324,10 @@ export default function App() {
     const envResult = EnvironmentBuilder.buildQuarantineDistrict();
     scene.add(envResult.sceneGroup);
     envResultRef.current = envResult;
+    ParticleSystem.setEnvMeshes(envResult.sceneGroup);
+    // Static shadow map: env-only casters mean one render per map, not per frame
+    moonLight.shadow.autoUpdate = false;
+    moonLight.shadow.needsUpdate = true;
 
     // 5. Init Systems
     ParticleSystem.init(scene);
@@ -291,14 +337,66 @@ export default function App() {
     scene.add(player.camera);
     playerRef.current = player;
 
+    // Cinematic sky, pooled gun VFX & post-processing stack
+    SkyDome.init(scene);
+    SkyDome.applyEnvironment({
+      fogColor: 0x182436,
+      directionalColor: 0xdbe8ff,
+      directionalPos: [25, 55, 15],
+    });
+    GunEffects.init(scene);
+    PostProcessing.init(renderer, scene, player.camera, saveData.settings.graphicsQuality);
+
+    // Stream the realistic skinned zombie roster, boss sculpt, heavy weapon, helicopter & squad character
+    GltfZombieFactory.preload();
+    ColossusModel.preload();
+    HelicopterAsset.preload();
+    AllyModelFactory.preload();
+    HeavyWeaponModel.preload().then(() => {
+      // If the operator is already carrying the heavy, swap in the authored model
+      const currentPlayer = playerRef.current;
+      const currentSave = SaveManager.get();
+      if (currentPlayer && currentSave.equippedWeapon === 'heavy') {
+        currentPlayer.setWeapon('heavy', currentSave.upgrades['heavy']);
+      }
+    });
+
     cutsceneRef.current = new HelicopterCutscene(scene, player.camera);
 
     const zombieManager = new ZombieManager(scene);
     zombieManagerRef.current = zombieManager;
 
+    // Debug/testing hook: live game state for automated visual checks.
+    // missionManager / ally squad resolve lazily — constructed later.
+    (globalThis as Record<string, unknown>).__dzGame = {
+      player,
+      zombieManager,
+      get missionManager() {
+        return missionManagerRef.current;
+      },
+      get allySquad() {
+        return AllySoldier.squad;
+      },
+      startMission: (id: number) => startMission(id),
+      scene,
+    };
+
     // Connect acoustic gunshot alerts to dormant zombies
     player.onGunshot = (origin, radius) => {
       zombieManager.onGunshotFired(origin, radius);
+    };
+
+    // HAVOC RPG-X rocket projectiles
+    player.onLaunchRocket = (origin, dir) => {
+      RocketManager.launch(origin, dir);
+    };
+
+    // Ordinance tablet: raise into satellite targeting mode
+    player.onLaunchAirstrike = () => {
+      const success = AirStrikeManager.enterTargetingMode(player.position.clone());
+      if (!success) {
+        soundFx.playDryFire(); // no turret uplink / no charges / on cooldown
+      }
     };
 
     const missionManager = new MissionManager(zombieManager);
@@ -307,7 +405,24 @@ export default function App() {
     // Initialize Tactical Deployables Managers
     GrenadeManager.init(scene);
     TurretManager.init(scene);
+    RocketManager.init(scene);
     DroneManager.init(scene);
+    AirStrikeManager.init(scene, player.camera);
+
+    // Set up air strike damage callback
+    AirStrikeManager.setStrikeDamageCallback((position, radius, damage) => {
+      // Consume one charge from the persistent strike inventory
+      SaveManager.useAirstrike();
+      zombieManager.damageArea(position, radius, damage, (killedZ) => {
+        missionManager.recordKill(false, killedZ.config.rewardCredits, killedZ.type === 'colossus');
+        const victimName = killedZ.isBoss ? (killedZ.config.name || 'BOSS') : killedZ.config.name;
+        addKillFeedEntry(victimName, 'AIR STRIKE', false, Boolean(killedZ.isBoss), 'OPERATOR');
+      });
+      // Screen shake for impact
+      player.camera.rotation.z += (Math.random() - 0.5) * 0.15;
+      player.camera.position.y += (Math.random() - 0.5) * 0.1;
+    });
+
     mission10CutsceneRef.current = new Mission10EndingCutscene(scene, player.camera);
 
     // Equip saved weapon and upgrades
@@ -339,9 +454,11 @@ export default function App() {
         lastFpsUpdate = time;
       }
 
-      // Update Particles & Dynamic Weather Simulation
+      // Update Particles, Dynamic Weather, Sky & Gun VFX Simulation
       ParticleSystem.update(delta);
       WeatherSystem.update(delta, player.position);
+      SkyDome.update(player.camera);
+      GunEffects.update(delta);
 
       // Check current screen mode using screenRef (avoids stale closures)
       if (screenRef.current === 'CUTSCENE') {
@@ -377,10 +494,6 @@ export default function App() {
           }
         }
       } else if (screenRef.current === 'PLAYING') {
-        if (player.weaponContainer && !player.weaponContainer.visible) {
-          player.weaponContainer.visible = true;
-        }
-
         const input = inputRef.current;
 
         // Current mission environment colliders & barrels (prevents collision overlap from previous maps)
@@ -388,43 +501,125 @@ export default function App() {
         const activeColliders = currentEnv ? currentEnv.colliderBoxes : [];
         const activeBarrels = currentEnv ? currentEnv.explosiveBarrels : [];
 
-        // Update Player Movement & Shooting with active mission collision boundaries
-        player.update(
-          delta,
-          input,
-          activeColliders,
-          zombieManager.getHitboxMeshes(),
-          activeBarrels,
-          (hitResult: HitResult) => {
-            // Hit Zombie handler
-            missionManager.stats.shotsHit++;
-            const { isFatal, zombie } = zombieManager.applyDamage(hitResult, (killedZ, isHeadshot) => {
-              missionManager.recordKill(isHeadshot, killedZ.config.rewardCredits, killedZ.type === 'colossus');
-              const weaponName = player.weaponConfig.name.split(' ')[0] || 'WEAPON';
-              const victimName = killedZ.isBoss ? (killedZ.config.name || 'BOSS') : killedZ.config.name;
-              addKillFeedEntry(victimName, weaponName, isHeadshot, Boolean(killedZ.isBoss), 'OPERATOR');
+        // AIR STRIKE targeting mode takes over: WASD pans the strike reticle,
+        // left-click drops the strike, right-click backs out. Player movement
+        // and weapon fire are suppressed while the tablet is raised.
+        if (AirStrikeManager.isInTargetingMode()) {
+          if (input.aimDownSights) {
+            AirStrikeManager.exitTargetingMode();
+          } else {
+            AirStrikeManager.updateTargeting(delta, {
+              forward: input.forward,
+              strafe: input.strafe,
+              shoot: input.shoot,
+              aimDownSights: input.aimDownSights,
+              lookDeltaX: 0,
+              lookDeltaY: 0,
             });
-
-            setHitFeedback({
-              hit: true,
-              isHeadshot: hitResult.zone === 'HEAD' || hitResult.zone === 'WEAKPOINT',
-              timestamp: performance.now(),
-            });
-          },
-          (barrel) => {
-            // Explode barrel damage
-            zombieManager.damageArea(barrel.position, 7.5, 220, (killedZ) => {
-              missionManager.recordKill(false, killedZ.config.rewardCredits);
-              const victimName = killedZ.isBoss ? (killedZ.config.name || 'BOSS') : killedZ.config.name;
-              addKillFeedEntry(victimName, 'BARREL', false, Boolean(killedZ.isBoss), 'OPERATOR');
-            });
-            // If player is too close, take blast damage
-            const distToPlayer = player.position.distanceTo(barrel.position);
-            if (distToPlayer < 6.0) {
-              player.takeDamage(Math.round(40 * (1 - distToPlayer / 6.0)), barrel.position);
-            }
           }
-        );
+          // Swap render to the bird's-eye targeting camera (or back if just exited)
+          const targetingCam = AirStrikeManager.getTargetingCamera();
+          if (targetingCam) {
+            PostProcessing.setCamera(targetingCam);
+          } else {
+            PostProcessing.setCamera(player.camera);
+          }
+          // Suppress player fire & movement this frame (reticle input was consumed above)
+          const savedShoot = input.shoot;
+          const savedForward = input.forward;
+          const savedStrafe = input.strafe;
+          input.shoot = false;
+          input.forward = 0;
+          input.strafe = 0;
+          player.update(
+            delta,
+            input,
+            activeColliders,
+            zombieManager.getHitboxMeshes(),
+            activeBarrels,
+            currentEnv ? [currentEnv.sceneGroup] : [],
+            (hitResult: HitResult) => {
+              missionManager.stats.shotsHit++;
+              const { isFatal, zombie } = zombieManager.applyDamage(hitResult, (killedZ, isHeadshot) => {
+                missionManager.recordKill(isHeadshot, killedZ.config.rewardCredits, killedZ.type === 'colossus');
+                const weaponName = player.weaponConfig.name.split(' ')[0] || 'WEAPON';
+                const victimName = killedZ.isBoss ? (killedZ.config.name || 'BOSS') : killedZ.config.name;
+                addKillFeedEntry(victimName, weaponName, isHeadshot, Boolean(killedZ.isBoss), 'OPERATOR');
+              });
+              setHitFeedback({
+                hit: true,
+                isHeadshot: hitResult.zone === 'HEAD' || hitResult.zone === 'WEAKPOINT',
+                timestamp: performance.now(),
+              });
+            },
+            (barrel) => {
+              zombieManager.damageArea(barrel.position, 7.5, 220, (killedZ) => {
+                missionManager.recordKill(false, killedZ.config.rewardCredits);
+                const victimName = killedZ.isBoss ? (killedZ.config.name || 'BOSS') : killedZ.config.name;
+                addKillFeedEntry(victimName, 'BARREL', false, Boolean(killedZ.isBoss), 'OPERATOR');
+              });
+              const distToPlayer = player.position.distanceTo(barrel.position);
+              if (distToPlayer < 6.0) {
+                player.takeDamage(Math.round(40 * (1 - distToPlayer / 6.0)), barrel.position);
+              }
+            }
+          );
+          input.shoot = savedShoot;
+          input.forward = savedForward;
+          input.strafe = savedStrafe;
+          // Hide the tablet mesh while looking through the satellite feed
+          if (player.weaponContainer && player.weaponContainer.visible) {
+            player.weaponContainer.visible = false;
+          }
+          AirStrikeManager.update(delta);
+        } else {
+          // Restore first-person camera
+          PostProcessing.setCamera(player.camera);
+          if (player.weaponContainer && !player.weaponContainer.visible) {
+            player.weaponContainer.visible = true;
+          }
+
+          // Update Player Movement & Shooting with active mission collision boundaries
+          player.update(
+            delta,
+            input,
+            activeColliders,
+            zombieManager.getHitboxMeshes(),
+            activeBarrels,
+            currentEnv ? [currentEnv.sceneGroup] : [],
+            (hitResult: HitResult) => {
+              // Hit Zombie handler
+              missionManager.stats.shotsHit++;
+              const { isFatal, zombie } = zombieManager.applyDamage(hitResult, (killedZ, isHeadshot) => {
+                missionManager.recordKill(isHeadshot, killedZ.config.rewardCredits, killedZ.type === 'colossus');
+                const weaponName = player.weaponConfig.name.split(' ')[0] || 'WEAPON';
+                const victimName = killedZ.isBoss ? (killedZ.config.name || 'BOSS') : killedZ.config.name;
+                addKillFeedEntry(victimName, weaponName, isHeadshot, Boolean(killedZ.isBoss), 'OPERATOR');
+              });
+
+              setHitFeedback({
+                hit: true,
+                isHeadshot: hitResult.zone === 'HEAD' || hitResult.zone === 'WEAKPOINT',
+                timestamp: performance.now(),
+              });
+            },
+            (barrel) => {
+              // Explode barrel damage
+              zombieManager.damageArea(barrel.position, 7.5, 220, (killedZ) => {
+                missionManager.recordKill(false, killedZ.config.rewardCredits);
+                const victimName = killedZ.isBoss ? (killedZ.config.name || 'BOSS') : killedZ.config.name;
+                addKillFeedEntry(victimName, 'BARREL', false, Boolean(killedZ.isBoss), 'OPERATOR');
+              });
+              // If player is too close, take blast damage
+              const distToPlayer = player.position.distanceTo(barrel.position);
+              if (distToPlayer < 6.0) {
+                player.takeDamage(Math.round(40 * (1 - distToPlayer / 6.0)), barrel.position);
+              }
+            }
+          );
+
+          AirStrikeManager.update(delta);
+        }
 
         // Update Zombie AI & Attacks with field of view and flashlight detection
         const playerForward = new THREE.Vector3();
@@ -476,6 +671,30 @@ export default function App() {
             missionManager.recordKill(isHeadshot, killedZ.config.rewardCredits, killedZ.type === 'colossus');
             const victimName = killedZ.isBoss ? (killedZ.config.name || 'BOSS') : killedZ.config.name;
             addKillFeedEntry(victimName, 'SENTRY TURRET', isHeadshot, Boolean(killedZ.isBoss), 'TURRET');
+          }
+        );
+
+        // Update HAVOC RPG-X rockets in flight (impact detonations & backblast)
+        RocketManager.update(
+          delta,
+          zombieManager,
+          currentEnv ? [currentEnv.sceneGroup] : [],
+          activeBarrels,
+          (killedZ: any, isHeadshot: boolean) => {
+            missionManager.recordKill(isHeadshot, killedZ.config.rewardCredits, killedZ.type === 'colossus');
+            const victimName = killedZ.isBoss ? (killedZ.config.name || 'BOSS') : killedZ.config.name;
+            addKillFeedEntry(victimName, 'ROCKET LAUNCHER', isHeadshot, Boolean(killedZ.isBoss), 'OPERATOR');
+          },
+          (shakeIntensity: number) => {
+            player.camera.rotation.z += (Math.random() - 0.5) * 0.09 * shakeIntensity;
+            player.camera.position.y += (Math.random() - 0.5) * 0.08 * shakeIntensity;
+          },
+          (blastPos: THREE.Vector3) => {
+            // Point-blank backblast discipline: the operator eats their own blast
+            const dist = player.position.distanceTo(blastPos);
+            if (dist < 5.0) {
+              player.takeDamage(Math.round(55 * (1 - dist / 5.0)), blastPos);
+            }
           }
         );
 
@@ -536,10 +755,14 @@ export default function App() {
           setDroneStatusTick(time);
         }
 
+        // Update Air Strike Manager
+        AirStrikeManager.update(delta);
+
         if (SaveManager.get().hasAllyRecruit && AllySoldier.isAlive) {
           AllySoldier.update(
             delta,
             player.position,
+            player.yaw,
             zombieManager,
             (killedZ: any, isHeadshot: boolean) => {
               missionManager.recordKill(isHeadshot, killedZ.config.rewardCredits, killedZ.type === 'colossus');
@@ -563,7 +786,7 @@ export default function App() {
         });
 
         // Update Mission Objectives & Waves
-        missionManager.update(delta, player.position, (finalStats) => {
+        missionManager.update(delta, player.position, player.yaw, (finalStats) => {
           safeExitPointerLock();
           setEndMissionStats({
             isVictory: true,
@@ -603,9 +826,16 @@ export default function App() {
         player.camera.lookAt(0, 1.5, 5);
       }
 
-      // Render Scene safely
+      // Render Scene safely through the cinematic post-processing stack
       try {
-        renderer.render(scene, player.camera);
+        const damagePulse = THREE.MathUtils.clamp(player.damageFlashTime / 0.4, 0, 1);
+        const lowHealth = player.hp < 45 ? 1 - player.hp / 45 : 0;
+        const muzzleFlash = THREE.MathUtils.clamp(player.muzzleLight.intensity / 13, 0, 1) * 0.05;
+        PostProcessing.render(delta, {
+          damage: damagePulse,
+          lowHealth,
+          flash: muzzleFlash,
+        });
       } catch (err) {
         console.error('WebGL render error:', err);
       }
@@ -622,6 +852,8 @@ export default function App() {
         player.camera.aspect = w / h;
         player.camera.updateProjectionMatrix();
         renderer.setSize(w, h, false);
+        PostProcessing.setSize(w, h);
+        AirStrikeManager.onResize(w / h);
       }
     };
     window.addEventListener('resize', handleResize);
@@ -727,14 +959,19 @@ export default function App() {
           inputRef.current.ascend = true;
         } else {
           inputRef.current.interact = true;
-          // Check objective interaction
+          // Check objective interaction (generator consoles etc.)
           if (playerRef.current && missionManagerRef.current) {
             missionManagerRef.current.tryInteractObjective(playerRef.current.position);
+            // Rescue proximity check for survivor objectives
+            missionManagerRef.current.interactRequested = true;
           }
         }
       }
       if (e.code === 'KeyG') {
         handleThrowGrenade();
+      }
+      if (e.code === 'KeyV') {
+        handleShove();
       }
       if (e.code === 'KeyT') {
         handleDeployTurret();
@@ -772,16 +1009,17 @@ export default function App() {
         setShowDebug((prev) => !prev);
       }
 
-      // Quick weapon hotkeys 1-6
+      // Quick weapon hotkeys 1-9
       const num = parseInt(e.key);
-      if (num >= 1 && num <= 6) {
-        const weaponKeys: WeaponTypeKey[] = ['pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper'];
+      if (num >= 1 && num <= 9) {
+        const weaponKeys: WeaponTypeKey[] = ['pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper', 'rocket', 'katana', 'airstrike'];
         const selected = weaponKeys[num - 1];
         if (selected && saveData.unlockedWeapons.includes(selected)) {
           SaveManager.equipWeapon(selected);
           if (playerRef.current) {
             playerRef.current.setWeapon(selected, saveData.upgrades[selected]);
           }
+          AirStrikeManager.exitTargetingMode();
           setSaveData({ ...SaveManager.get() });
           soundFx.playClick();
         }
@@ -810,8 +1048,10 @@ export default function App() {
 
     const handleMouseDown = (e: MouseEvent) => {
       soundFx.userInteracted();
+      (globalThis as Record<string, unknown>).__mdFired = ((globalThis as Record<string, unknown>).__mdFired as number || 0) + 1;
 
       if (screenRef.current === 'PLAYING') {
+        (globalThis as Record<string, unknown>).__shootSet = true;
         isMouseDown = true;
         lastMouseX = e.clientX;
         lastMouseY = e.clientY;
@@ -928,10 +1168,56 @@ export default function App() {
     const newEnv = EnvironmentBuilder.buildForMission(missionId);
     scene.add(newEnv.sceneGroup);
     envResultRef.current = newEnv;
+    ParticleSystem.setEnvMeshes(newEnv.sceneGroup);
 
-    // Update scene fog & sky background
-    scene.fog = new THREE.Fog(newEnv.fogColor, 20, 160);
+    // Update scene fog & sky background (fog pushed far back so the ground
+    // stays crisp; atmosphere comes from lighting & the sky dome, not wash)
+    scene.fog = new THREE.Fog(newEnv.fogColor, 42, 300);
     scene.background = new THREE.Color(newEnv.fogColor);
+    // Publish world colliders + this map's movement bounds so zombies, allies,
+    // the drone AND the operator all stay inside the enlarged arenas
+    NavCollision.setColliders(newEnv.colliderBoxes, newEnv.bounds);
+    if (playerRef.current) {
+      playerRef.current.setMapBounds(newEnv.bounds);
+    }
+    SkyDome.applyEnvironment(newEnv);
+
+    // STATIC SHADOW MAP: only walls/props cast shadows now (actors don't), so
+    // the moonlight shadow pass runs exactly once per map load instead of
+    // every frame — a full scene re-render saved each frame.
+    const moon = moonLightRef.current;
+    if (moon) {
+      moon.shadow.autoUpdate = false;
+      moon.shadow.needsUpdate = true;
+    }
+
+    // Beacon markers on every interactive objective + the safehouse/evac zone:
+    // targets are physically marked in the world, never floating in blank space
+    if (scene) {
+      // Clear previous mission's beacons first
+      for (const marker of objectiveMarkersRef.current) {
+        scene.remove(marker);
+      }
+      objectiveMarkersRef.current = [];
+      const beaconFor = (pos: THREE.Vector3, color: number, height: number) => {
+        const b = MissionEntityManager.createBeacon(color, height);
+        b.position.set(pos.x, 0, pos.z);
+        scene.add(b);
+        objectiveMarkersRef.current.push(b);
+      };
+      for (const io of newEnv.interactiveObjects) {
+        const color = io.type === 'GENERATOR' ? 0xf59e0b : io.type === 'SAFEHOUSE' ? 0x22c55e : 0x38bdf8;
+        beaconFor(io.position, color, 12);
+      }
+      if (newEnv.safehouseZone?.position) {
+        beaconFor(newEnv.safehouseZone.position, 0x22c55e, 12);
+      }
+    }
+
+    // Re-bake the reflection probe so metals reflect THIS map's sky
+    if (rendererRef.current) {
+      ReflectionProbe.applyEnvironment(rendererRef.current, scene, newEnv);
+    }
 
     // Update ambient & directional lighting
     if (ambientLightRef.current) {
@@ -973,7 +1259,22 @@ export default function App() {
   // Deployment: Start Mission
   const startMission = (missionId: number) => {
     soundFx.userInteracted();
+
+    // Show loading screen first
+    setLoadingMissionId(missionId);
+    setShowLoadingScreen(true);
+  };
+
+  // Called when loading screen completes
+  const onLoadingComplete = (missionId: number) => {
+    setShowLoadingScreen(false);
+
     const currentSave = SaveManager.get();
+
+    // Fresh ordinance tablet for the new deployment — charges come from the
+    // persistent strike inventory (buyable in the Arsenal)
+    AirStrikeManager.reset();
+    AirStrikeManager.setCharges(currentSave.airstrikes ?? 20);
 
     // Dynamically load the unique map, obstacles, spawns, and atmosphere
     loadMissionEnvironment(missionId);
@@ -983,9 +1284,11 @@ export default function App() {
       zombieManagerRef.current.clearAll();
       ParticleSystem.clearAll();
       WeatherSystem.clearAll();
+      GunEffects.clearAll();
 
       // Clean tactical deployables & spawn recruited squad ally
       GrenadeManager.clearAll();
+      RocketManager.clearAll();
       TurretManager.clearAll();
       if (currentSave.hasAllyRecruit && currentSave.isAllyDeployed !== false && sceneRef.current) {
         AllySoldier.init(sceneRef.current, playerRef.current.position, currentSave.allyCount || 1);
@@ -998,7 +1301,7 @@ export default function App() {
       if (playerRef.current.weaponContainer) {
         playerRef.current.weaponContainer.visible = false;
       }
-      missionManagerRef.current.startMission(missionId);
+      missionManagerRef.current.startMission(missionId, playerRef.current.position, playerRef.current.yaw);
     }
 
     screenRef.current = 'CUTSCENE';
@@ -1018,6 +1321,11 @@ export default function App() {
     safeExitPointerLock();
     DroneManager.recall();
     setIsDroneActive(false);
+    AirStrikeManager.reset();
+    AirStrikeManager.exitTargetingMode();
+    if (playerRef.current) {
+      PostProcessing.setCamera(playerRef.current.camera);
+    }
     if (cutsceneRef.current) {
       cutsceneRef.current.dispose();
     }
@@ -1029,6 +1337,7 @@ export default function App() {
     }
     ParticleSystem.clearAll();
     GrenadeManager.clearAll();
+    RocketManager.clearAll();
     TurretManager.clearAll();
     AllySoldier.clear();
 
@@ -1050,6 +1359,14 @@ export default function App() {
       GrenadeManager.throwGrenade(origin, forward);
       soundFx.playRadioTransmission();
       setSaveData({ ...SaveManager.get() });
+    }
+  };
+
+  // Melee shove (V): knock nearby zombies back and stagger them to break out of swarms
+  const handleShove = () => {
+    if (screenRef.current !== 'PLAYING' || !playerRef.current || !zombieManagerRef.current) return;
+    if (playerRef.current.tryShove()) {
+      zombieManagerRef.current.shove(playerRef.current.position, 2.4);
     }
   };
 
@@ -1109,7 +1426,7 @@ export default function App() {
   // Switch to next available weapon (cycling smoothly through ALL weapons)
   const handleSwitchWeapon = () => {
     soundFx.playClick();
-    const allWeapons: WeaponTypeKey[] = ['pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper'];
+    const allWeapons: WeaponTypeKey[] = ['pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper', 'rocket', 'katana', 'airstrike'];
     const curIdx = allWeapons.indexOf(saveData.equippedWeapon);
     const nextIdx = curIdx >= 0 ? (curIdx + 1) % allWeapons.length : 0;
     const nextWeapon = allWeapons[nextIdx];
@@ -1118,6 +1435,7 @@ export default function App() {
     if (playerRef.current) {
       playerRef.current.setWeapon(nextWeapon, saveData.upgrades[nextWeapon]);
     }
+    AirStrikeManager.exitTargetingMode();
     setSaveData({ ...SaveManager.get() });
   };
 
@@ -1128,6 +1446,7 @@ export default function App() {
       if (playerRef.current) {
         playerRef.current.setWeapon(weaponKey, saveData.upgrades[weaponKey]);
       }
+      AirStrikeManager.exitTargetingMode();
       setSaveData({ ...SaveManager.get() });
       soundFx.playClick();
     }
@@ -1153,23 +1472,23 @@ export default function App() {
       {screen === 'CUTSCENE' && (
         <div className="absolute inset-0 z-30 pointer-events-none flex flex-col justify-between">
           {/* Top Cinematic Bar */}
-          <div className="w-full h-16 md:h-20 bg-black flex items-center justify-between px-6 pointer-events-auto border-b border-zinc-900">
-            <div className="flex items-center gap-3">
-              <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
-              <span className="font-teko text-lg md:text-xl tracking-widest text-zinc-200">
+          <div className="w-full h-16 md:h-20 short:h-11 bg-black flex items-center justify-between pl-[max(env(safe-area-inset-left),1.5rem)] pr-[max(env(safe-area-inset-right),1.5rem)] pointer-events-auto border-b border-zinc-900">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse shrink-0" />
+              <span className="font-teko text-lg md:text-xl tracking-widest text-zinc-200 truncate">
                 OPERATION NIGHTFALL // AIRBORNE INSERTION
               </span>
             </div>
             <button
               onClick={() => cutsceneRef.current?.skip()}
-              className="px-4 py-1.5 bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded font-teko text-lg tracking-wider transition-colors pointer-events-auto cursor-pointer"
+              className="px-4 py-1.5 bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded font-teko text-lg tracking-wider transition-colors pointer-events-auto cursor-pointer shrink-0"
             >
               SKIP [SPACE] ⏭️
             </button>
           </div>
 
           {/* Radio Subtitle Box */}
-          <div className="w-full pb-8 md:pb-12 px-4 flex justify-center">
+          <div className="w-full pb-8 md:pb-12 short:pb-2 px-4 flex justify-center">
             {cutsceneSubtitle && (
               <div className="bg-black/90 backdrop-blur-md border border-zinc-700/80 px-6 py-3 rounded-lg max-w-2xl text-center shadow-2xl">
                 <div className="font-teko text-xs md:text-sm tracking-widest text-emerald-400 mb-0.5">
@@ -1201,23 +1520,23 @@ export default function App() {
           />
 
           {/* Top Cinematic Bar */}
-          <div className="w-full h-16 md:h-20 bg-black flex items-center justify-between px-6 border-b border-zinc-900 pointer-events-auto">
-            <div className="flex items-center gap-3">
-              <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-ping" />
-              <span className="font-teko text-lg md:text-xl text-red-500 tracking-wider font-bold">
+          <div className="w-full h-16 md:h-20 short:h-11 bg-black flex items-center justify-between pl-[max(env(safe-area-inset-left),1.5rem)] pr-[max(env(safe-area-inset-right),1.5rem)] border-b border-zinc-900 pointer-events-auto">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-ping shrink-0" />
+              <span className="font-teko text-lg md:text-xl text-red-500 tracking-wider font-bold truncate">
                 OPERATION OMEGA // THERMOBARIC BLAST DETONATION
               </span>
             </div>
             <button
               onClick={() => mission10CutsceneRef.current?.skip()}
-              className="px-4 py-1.5 bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded font-teko text-lg tracking-wider transition-colors pointer-events-auto cursor-pointer"
+              className="px-4 py-1.5 bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded font-teko text-lg tracking-wider transition-colors pointer-events-auto cursor-pointer shrink-0"
             >
               SKIP EXTRACTION [SPACE] ⏭️
             </button>
           </div>
 
           {/* Subtitles Container */}
-          <div className="w-full pb-8 md:pb-12 px-4 flex justify-center">
+          <div className="w-full pb-8 md:pb-12 short:pb-2 px-4 flex justify-center">
             {cutsceneSubtitle && (
               <div className="bg-black/90 backdrop-blur-md border border-amber-500/80 px-6 py-3 rounded-lg max-w-2xl text-center shadow-2xl animate-fade-in">
                 <div className="font-teko text-xs md:text-sm tracking-widest text-amber-400 mb-0.5 font-bold">
@@ -1269,6 +1588,7 @@ export default function App() {
           onInteract={() => {
             if (playerRef.current && missionManagerRef.current) {
               missionManagerRef.current.tryInteractObjective(playerRef.current.position);
+              missionManagerRef.current.interactRequested = true;
             }
           }}
           onSprintToggle={() => setIsSprinting((prev) => !prev)}
@@ -1278,6 +1598,7 @@ export default function App() {
           turretsCount={saveData.turrets || 0}
           onThrowGrenade={handleThrowGrenade}
           onDeployTurret={handleDeployTurret}
+          onShove={handleShove}
           hasAllyRecruit={saveData.hasAllyRecruit}
           allyStatus={{
             isAlive: AllySoldier.isAlive,
@@ -1318,12 +1639,58 @@ export default function App() {
           allyOrder={allyOrder}
           onToggleAllyOrder={handleToggleAllyOrder}
           killFeed={killFeed}
+          showFps={saveData.settings.showFps}
         />
       )}
 
       {/* Mobile Touch Joystick & Drag Handler */}
       {screen === 'PLAYING' && isMobile && (
         <MobileControls inputRef={inputRef} touchSensitivity={saveData.settings.touchSensitivity} />
+      )}
+
+      {/* AIR STRIKE SATELLITE TARGETING OVERLAY */}
+      {screen === 'PLAYING' && AirStrikeManager.isInTargetingMode() && (
+        <div className="absolute inset-0 z-30 pointer-events-none select-none">
+          {/* Satellite feed tint */}
+          <div className="absolute inset-0 bg-emerald-950/20" style={{ boxShadow: 'inset 0 0 180px rgba(0,40,20,0.8)' }} />
+
+          {/* Center strike reticle */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="relative w-48 h-48 md:w-64 md:h-64">
+              <div className="absolute inset-0 rounded-full border-2 border-red-500/80 animate-pulse" />
+              <div className="absolute inset-6 rounded-full border border-red-400/50" />
+              <div className="absolute left-1/2 top-0 bottom-0 w-px bg-red-500/60 -translate-x-1/2" />
+              <div className="absolute top-1/2 left-0 right-0 h-px bg-red-500/60 -translate-y-1/2" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="font-teko text-red-400 text-lg tracking-[0.3em] animate-pulse">STRIKE ZONE</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Top status bar */}
+          <div className="absolute top-14 left-0 right-0 flex justify-center">
+            <div className="bg-black/85 border border-emerald-500/60 px-6 py-2 rounded flex items-center gap-6">
+              <span className="font-teko text-emerald-400 text-lg tracking-widest animate-pulse">
+                ◈ SATELLITE UPLINK ACTIVE
+              </span>
+              <span className="font-mono text-xs text-zinc-300">
+                CHARGES: <span className="text-amber-300 font-bold">{AirStrikeManager.getCharges()}/{AirStrikeManager.getMaxCharges()}</span>
+              </span>
+              <span className="font-mono text-xs text-zinc-400">
+                PAYLOAD: <span className="text-red-400 font-bold">900KG JDAM</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Bottom control hints */}
+          <div className="absolute bottom-6 left-0 right-0 flex justify-center">
+            <div className="bg-black/85 border border-zinc-700 px-6 py-2.5 rounded flex items-center gap-5 font-military text-xs text-zinc-300 tracking-wider">
+              <span><b className="text-white">WASD</b> PAN TARGET</span>
+              <span><b className="text-red-400">LMB</b> CONFIRM STRIKE</span>
+              <span><b className="text-white">RMB</b> EXIT UPLINK</span>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Desktop Aim Re-engagement Overlay */}
@@ -1340,13 +1707,32 @@ export default function App() {
               CLICK SCREEN TO ENGAGE AIM
             </div>
             <p className="font-military text-xs text-zinc-300">
-              [WASD] Move &bull; [Left Click Hold] Fire &bull; [Right Click] ADS &bull; [Space] Jump &bull; [R] Reload &bull; [F] Light &bull; [E] Interact
+              [WASD] Move &bull; [Left Click Hold] Fire &bull; [Right Click] ADS &bull; [Space] Jump &bull; [V] Shove &bull; [R] Reload &bull; [F] Light &bull; [E] Interact
             </p>
             <div className="text-[11px] text-amber-400 font-bold uppercase tracking-wider bg-amber-500/15 py-1.5 px-3 rounded border border-amber-500/40">
               Click anywhere to lock cursor
             </div>
           </div>
         </div>
+      )}
+
+      {/* LOADING SCREEN */}
+      {showLoadingScreen && loadingMissionId > 0 && (
+        <LoadingScreen
+          missionId={loadingMissionId}
+          onComplete={(missionId) => onLoadingComplete(missionId)}
+        />
+      )}
+
+      {/* COMPANY INTRO SPLASH */}
+      {screen === 'COMPANY_INTRO' && (
+        <CompanyIntro
+          onComplete={() => {
+            soundFx.userInteracted();
+            screenRef.current = 'MENU';
+            setScreen('MENU');
+          }}
+        />
       )}
 
       {/* MAIN MENU */}
@@ -1417,12 +1803,12 @@ export default function App() {
       {/* PAUSE MENU MODAL */}
       {screen === 'PAUSED' && (
         <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center pointer-events-auto p-4 overflow-y-auto select-none touch-manipulation">
-          <div className="bg-zinc-950 border border-zinc-800 p-6 sm:p-8 rounded-2xl max-w-sm sm:max-w-md w-full text-center space-y-4 shadow-2xl my-auto">
+          <div className="bg-zinc-950 border border-zinc-800 p-6 sm:p-8 short:p-4 rounded-2xl max-w-sm sm:max-w-md short:max-w-2xl w-full text-center space-y-4 shadow-2xl my-auto">
             <div>
               <div className="font-mono text-[10px] text-red-500 uppercase tracking-widest font-bold mb-1">
                 COMBAT TACTICAL PAUSE
               </div>
-              <h3 className="font-teko text-4xl sm:text-5xl font-bold text-white tracking-wider leading-none">
+              <h3 className="font-teko text-4xl sm:text-5xl short:text-3xl font-bold text-white tracking-wider leading-none">
                 GAME PAUSED
               </h3>
               <p className="font-military text-xs text-zinc-400 mt-1">
@@ -1430,7 +1816,7 @@ export default function App() {
               </p>
             </div>
 
-            <div className="space-y-2.5 pt-1">
+            <div className="space-y-2.5 pt-1 short:pt-0 short:grid short:grid-cols-2 short:gap-2 short:space-y-0">
               <button
                 onClick={() => {
                   screenRef.current = 'PLAYING';
@@ -1508,7 +1894,7 @@ export default function App() {
 
               <button
                 onClick={returnToMenu}
-                className="w-full py-2 text-zinc-400 hover:text-red-400 font-teko text-lg font-bold transition-colors min-h-[40px] touch-manipulation cursor-pointer"
+                className="w-full py-2 text-zinc-400 hover:text-red-400 font-teko text-lg font-bold transition-colors min-h-[40px] touch-manipulation cursor-pointer short:col-span-2"
               >
                 QUIT TO MAIN MENU
               </button>
