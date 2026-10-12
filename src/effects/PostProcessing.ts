@@ -141,13 +141,16 @@ export class PostProcessing {
     this.gradePass = new ShaderPass(CinematicGradeShader);
     this.composer.addPass(this.gradePass);
 
-    // Composer only on HIGH. MEDIUM/LOW render direct to canvas: on a
+    // Composer only on desktop HIGH. MEDIUM/LOW render direct to canvas: on a
     // mid-range mobile GPU the three fullscreen passes (HDR target + tonemap
     // blit + grade pass with 3-tap chromatic aberration) cost more fragment
-    // fill than the scene itself. Damage/low-health feedback on those tiers
-    // fill than the scene itself. Damage/low-health feedback on those tiers
-    // comes from the HUD's red overlay instead of the shader grade.
-    this.enabled = quality === 'HIGH';
+    // fill than the scene itself. Mobile HIGH also renders direct — phones
+    // spend their budget on resolution instead (see getRenderPixelRatio in
+    // App.tsx). Damage/low-health feedback on those tiers comes from the
+    // HUD's red overlay instead of the shader grade.
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    this.enabled = quality === 'HIGH' && !isTouch;
   }
 
   public static setQuality(quality: 'LOW' | 'MEDIUM' | 'HIGH') {

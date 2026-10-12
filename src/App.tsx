@@ -66,6 +66,19 @@ function getRenderPixelRatio(quality: 'LOW' | 'MEDIUM' | 'HIGH', isTouch: boolea
   return Math.min(deviceDpr, quality === 'HIGH' ? 1.25 : 1.0);
 }
 
+/**
+ * Static scenery (buildings, roads, props) never moves: bake its transforms
+ * once and stop per-frame matrix updates for the whole subtree. With ~200
+ * environment meshes this skips hundreds of matrix multiplications and
+ * matrixWorld traversals every frame on mobile.
+ */
+function freezeStaticMatrices(root: THREE.Object3D) {
+  root.updateMatrixWorld(true);
+  root.traverse((obj) => {
+    obj.matrixAutoUpdate = false;
+  });
+}
+
 export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -348,6 +361,7 @@ export default function App() {
 
     // 4. Build Environment
     const envResult = EnvironmentBuilder.buildQuarantineDistrict();
+    freezeStaticMatrices(envResult.sceneGroup);
     scene.add(envResult.sceneGroup);
     envResultRef.current = envResult;
     ParticleSystem.setEnvMeshes(envResult.sceneGroup);
@@ -473,10 +487,10 @@ export default function App() {
     // to full whenever gameplay stops and recovers aggressively whenever FPS
     // is merely acceptable (not just excellent).
     let resolutionScale = 1.0;
-    // HIGH promises crisp visuals: never degrade below 0.8 there, even if FPS
-    // stays low — the user explicitly chose quality over smoothness.
-    const minResScale =
-      saveData.settings.graphicsQuality === 'HIGH' ? 0.8 : 0.65;
+    // Floors are relative to the tier's base ratio, which is already sharp
+    // (HIGH base 2.0): scaling to 0.6 of it still beats the old flat 1.0
+    // render, so quality can safely degrade further under load.
+    const minResScale = saveData.settings.graphicsQuality === 'HIGH' ? 0.6 : 0.7;
     let badSeconds = 0;
     let goodSeconds = 0;
     let playingSeconds = 0;
@@ -516,8 +530,8 @@ export default function App() {
             playingSeconds++;
             // Ignore the first seconds of a session (level load, shader compile)
             if (playingSeconds > 4) {
-              if (measuredFps < 24) {
-                // Two consecutive very-bad seconds before degrading quality
+              if (measuredFps < 28) {
+                // Two consecutive bad seconds before degrading quality
                 badSeconds++;
                 goodSeconds = 0;
                 if (badSeconds >= 2 && resolutionScale > minResScale) {
@@ -1250,6 +1264,7 @@ export default function App() {
 
     // Build designated unique map for this mission
     const newEnv = EnvironmentBuilder.buildForMission(missionId);
+    freezeStaticMatrices(newEnv.sceneGroup);
     scene.add(newEnv.sceneGroup);
     envResultRef.current = newEnv;
     ParticleSystem.setEnvMeshes(newEnv.sceneGroup);

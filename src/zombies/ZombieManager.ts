@@ -919,14 +919,17 @@ export class ZombieManager {
       // zombies slide along walls, never phase through them
       NavCollision.resolve(z.mesh.position, z.isBoss ? 0.85 : 0.45, z.isBoss ? 3.2 : 1.8);
 
-      // FAR-ZOMBIE LOD: beyond 55m, alternate frames skip animation entirely
-      // (movement already happened above; the animation clock is compensated
-      // with a doubled delta on update frames so pace stays correct).
-      const farLod = distToPlayer > 55 && !z.isBoss;
-      if (farLod && (this.frame + i) % 2 !== 0) continue;
+      // FAR-ZOMBIE LOD: beyond 40m, animation updates are staggered across
+      // frames (movement already happened above; the animation clock is
+      // compensated with a multiplied delta on update frames so pace stays
+      // correct). Skinning cost still applies on rendered frames, but mixer
+      // evaluation — the CPU side — drops sharply.
+      const farLod = distToPlayer > 40 && !z.isBoss;
+      const lodStride = distToPlayer > 60 ? 3 : 2;
+      if (farLod && (this.frame + i) % lodStride !== 0) continue;
 
       // Update procedural animation based on state
-      ZombieModelFactory.updateZombieAnimation(z, farLod ? delta * 2 : delta, distToTarget);
+      ZombieModelFactory.updateZombieAnimation(z, farLod ? delta * lodStride : delta, distToTarget);
     }
 
     this.updateCorpses(delta);
