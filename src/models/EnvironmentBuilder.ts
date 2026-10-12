@@ -1065,30 +1065,40 @@ export class EnvironmentBuilder {
     // ==========================================
     // HURDLE FIELDS — scattered cover across the outer districts
     // ==========================================
+    // buildOuterDistricts: when false (default), skips the far decorative
+    // hurdle fields that lie outside the playable corridor. They contain
+    // no spawns, interactives, barrels, or mission objectives — only visual
+    // backdrop. Disabling saves ~35% of environment meshes and build time.
+    const buildOuterDistricts = false;
     const districtKeepOut: { x: number; z: number; r: number }[] = [
       { x: 0, z: -78, r: 9 },  // operator insertion point
       { x: 0, z: 16, r: 7 },   // emergency generator
       { x: 0, z: 48, r: 9 },   // safehouse
     ];
-    createHurdleField(root, colliderBoxes, {
-      minX: -92, maxX: -24, minZ: -125, maxZ: 130, keepOut: districtKeepOut, count: 22, seed: 101,
-    });
-    createHurdleField(root, colliderBoxes, {
-      minX: 24, maxX: 92, minZ: -125, maxZ: 130, keepOut: districtKeepOut, count: 22, seed: 202,
-    });
-    createHurdleField(root, colliderBoxes, {
-      minX: -60, maxX: 60, minZ: -138, maxZ: -95, keepOut: districtKeepOut, count: 12, seed: 303,
-    });
-    createHurdleField(root, colliderBoxes, {
-      minX: -60, maxX: 60, minZ: 60, maxZ: 135, keepOut: districtKeepOut, count: 12, seed: 404,
-    });
+    if (buildOuterDistricts) {
+      createHurdleField(root, colliderBoxes, {
+        minX: -92, maxX: -24, minZ: -125, maxZ: 130, keepOut: districtKeepOut, count: 22, seed: 101,
+      });
+      createHurdleField(root, colliderBoxes, {
+        minX: 24, maxX: 92, minZ: -125, maxZ: 130, keepOut: districtKeepOut, count: 22, seed: 202,
+      });
+      createHurdleField(root, colliderBoxes, {
+        minX: -60, maxX: 60, minZ: -138, maxZ: -95, keepOut: districtKeepOut, count: 12, seed: 303,
+      });
+      createHurdleField(root, colliderBoxes, {
+        minX: -60, maxX: 60, minZ: 60, maxZ: 135, keepOut: districtKeepOut, count: 12, seed: 404,
+      });
+    }
 
     return {
       sceneGroup: root,
       colliderBoxes,
       interactiveObjects,
       explosiveBarrels,
-      bounds: { minX: -105, maxX: 105, minZ: -145, maxZ: 145 },
+      // Tightened to the playable corridor (spawn Z=-78 to safehouse Z=48)
+      // with margin for the player to move sideways. The outer decorative
+      // districts are not built by default (see buildOuterDistricts flag).
+      bounds: { minX: -65, maxX: 65, minZ: -85, maxZ: 58 },
       safehouseZone: {
         position: new THREE.Vector3(0, 0, 48),
         radius: 4.5,

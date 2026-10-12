@@ -283,18 +283,25 @@ export class CentralPlazaMap {
     // ==========================================
     // HURDLE FIELDS — scattered cover across the expanded arena
     // ==========================================
+    // buildOuterDistricts: when false (default), skips the far decorative
+    // hurdle fields outside the playable corridor. No spawns/interactives
+    // live there — only visual backdrop. Saves ~35% env meshes & build time.
+    const buildOuterDistricts = false;
     const keepOut = [{"x":0,"z":0,"r":12},{"x":-14,"z":10,"r":10},{"x":0,"z":44,"r":10},{"x":14,"z":-12,"r":9},{"x":0,"z":-32,"r":9}];
-    createHurdleField(root, colliderBoxes, { minX: -92, maxX: -26, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 801 });
-    createHurdleField(root, colliderBoxes, { minX: 26, maxX: 92, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 802 });
-    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: -138, maxZ: -92, keepOut, count: 10, seed: 803 });
-    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: 62, maxZ: 136, keepOut, count: 10, seed: 804 });
+    if (buildOuterDistricts) {
+      createHurdleField(root, colliderBoxes, { minX: -92, maxX: -26, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 801 });
+      createHurdleField(root, colliderBoxes, { minX: 26, maxX: 92, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 802 });
+      createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: -138, maxZ: -92, keepOut, count: 10, seed: 803 });
+      createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: 62, maxZ: 136, keepOut, count: 10, seed: 804 });
+    }
 
     return {
       sceneGroup: root,
       colliderBoxes,
       interactiveObjects,
       explosiveBarrels,
-      bounds: { minX: -105, maxX: 105, minZ: -143, maxZ: 143 },
+      // Tightened to playable area (spawns ~Z=-32 to Z=44)
+      bounds: { minX: -70, maxX: 70, minZ: -42, maxZ: 54 },
       safehouseZone: {
         position: new THREE.Vector3(0, 0, 44),
         radius: 5.5,

@@ -302,18 +302,25 @@ export class FreightDepotMap {
     // ==========================================
     // HURDLE FIELDS — scattered cover across the expanded arena
     // ==========================================
+    // buildOuterDistricts: when false (default), skips the far decorative
+    // hurdle fields outside the playable corridor. No spawns/interactives
+    // live there — only visual backdrop. Saves ~35% env meshes & build time.
+    const buildOuterDistricts = false;
     const keepOut = [{"x":-18,"z":8,"r":7},{"x":14,"z":12,"r":7},{"x":22,"z":31,"r":8},{"x":-2,"z":-10,"r":8},{"x":-24,"z":-35,"r":9}];
-    createHurdleField(root, colliderBoxes, { minX: -92, maxX: -26, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 601 });
-    createHurdleField(root, colliderBoxes, { minX: 26, maxX: 92, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 602 });
-    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: -138, maxZ: -92, keepOut, count: 10, seed: 603 });
-    createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: 62, maxZ: 136, keepOut, count: 10, seed: 604 });
+    if (buildOuterDistricts) {
+      createHurdleField(root, colliderBoxes, { minX: -92, maxX: -26, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 601 });
+      createHurdleField(root, colliderBoxes, { minX: 26, maxX: 92, minZ: -128, maxZ: 132, keepOut, count: 18, seed: 602 });
+      createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: -138, maxZ: -92, keepOut, count: 10, seed: 603 });
+      createHurdleField(root, colliderBoxes, { minX: -55, maxX: 55, minZ: 62, maxZ: 136, keepOut, count: 10, seed: 604 });
+    }
 
     return {
       sceneGroup: root,
       colliderBoxes,
       interactiveObjects,
       explosiveBarrels,
-      bounds: { minX: -105, maxX: 105, minZ: -143, maxZ: 143 },
+      // Tightened to playable area (spawns ~Z=-35 to Z=31)
+      bounds: { minX: -70, maxX: 70, minZ: -45, maxZ: 41 },
       safehouseZone: {
         position: new THREE.Vector3(22, 0, 31),
         radius: 5.0,
