@@ -50,6 +50,22 @@ import { CompanyIntro } from './ui/CompanyIntro';
 import { LoadingScreen } from './ui/LoadingScreen';
 import { Coins } from 'lucide-react';
 
+/**
+ * Mobile render resolution: a flat pixelRatio of 1.0 renders at CSS-pixel
+ * size (~390px wide in portrait) and upscales ~2.75x to the physical panel —
+ * an unreadably blurry image regardless of graphics settings. Instead clamp
+ * the device pixel ratio per quality tier now that the heavy bottlenecks
+ * (post-processing, zombie/material/particle caps) are optimized away.
+ */
+function getRenderPixelRatio(quality: 'LOW' | 'MEDIUM' | 'HIGH', isTouch: boolean): number {
+  const deviceDpr = window.devicePixelRatio || 1;
+  if (isTouch) {
+    const maxRatio = quality === 'HIGH' ? 2.0 : quality === 'MEDIUM' ? 1.5 : 1.0;
+    return Math.min(deviceDpr, maxRatio);
+  }
+  return Math.min(deviceDpr, quality === 'HIGH' ? 1.25 : 1.0);
+}
+
 export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -169,10 +185,12 @@ export default function App() {
     PostProcessing.setQuality(quality);
     const renderer = rendererRef.current;
     if (renderer) {
-      // Touch devices render at 1.0 always: tablets/phones run 2K+ panels
-      // where even 1.25x halves the GPU fragment budget for no visible gain.
       const touch = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
-      renderer.setPixelRatio(touch ? 1.0 : Math.min(window.devicePixelRatio, quality === 'HIGH' ? 1.25 : 1.0));
+      const baseDpr = getRenderPixelRatio(quality, touch);
+      baseDprRef.current = baseDpr;
+      // Reset to the tier's full resolution; the adaptive dynamic-resolution
+      // loop re-applies any needed downscale within seconds if FPS demands it.
+      renderer.setPixelRatio(baseDpr);
     }
     const moon = moonLightRef.current;
     if (moon) {
@@ -193,6 +211,10 @@ export default function App() {
   // Core Engine Instances (persisted across renders)
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  // Base device pixel ratio for the current quality tier (before any adaptive
+  // dynamic-resolution scaling) — shared between the init, quality-change and
+  // render-loop effects so they never fight over the render resolution.
+  const baseDprRef = useRef(1.0);
   const playerRef = useRef<PlayerController | null>(null);
   const zombieManagerRef = useRef<ZombieManager | null>(null);
   const missionManagerRef = useRef<MissionManager | null>(null);
@@ -272,9 +294,8 @@ export default function App() {
     const initW = containerRef.current.clientWidth || window.innerWidth || 800;
     const initH = containerRef.current.clientHeight || window.innerHeight || 600;
     renderer.setSize(initW, initH);
-    const dpr = isTouchDevice
-      ? 1.0 // touch devices: native 1x — high-DPI panels melt the fragment budget
-      : Math.min(window.devicePixelRatio, saveData.settings.graphicsQuality === 'HIGH' ? 1.25 : 1.0);
+    const dpr = getRenderPixelRatio(saveData.settings.graphicsQuality, isTouchDevice);
+    baseDprRef.current = dpr;
     renderer.setPixelRatio(dpr);
     renderer.shadowMap.enabled = saveData.settings.graphicsQuality !== 'LOW';
     renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -462,7 +483,7 @@ export default function App() {
 
     const applyResolutionScale = (scale: number) => {
       resolutionScale = scale;
-      renderer.setPixelRatio(dpr * scale);
+      renderer.setPixelRatio(baseDprRef.current * scale);
       const cw = containerRef.current?.clientWidth || window.innerWidth;
       const ch = containerRef.current?.clientHeight || window.innerHeight;
       renderer.setSize(cw, ch, false);
