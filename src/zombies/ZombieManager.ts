@@ -19,6 +19,7 @@ interface CorpseRecord {
   poolSize: number;
   sinkTimer: number;
   sinking: boolean;
+  deathTime: number;
 }
 
 export class ZombieManager {
@@ -539,6 +540,7 @@ export class ZombieManager {
             poolSize: z.type === 'colossus' ? 5.5 : z.type === 'brute' ? 4.0 : 3.0,
             sinkTimer: 0,
             sinking: false,
+            deathTime: 0,
           });
           this.zombies.splice(i, 1);
           if (this.bossInstance === z) this.bossInstance = null;
@@ -953,23 +955,32 @@ export class ZombieManager {
       ZombieModelFactory.updateZombieAnimation(z, farLod ? delta * lodStride : delta, distToTarget);
     }
 
-    this.updateCorpses(delta);
+    this.updateCorpses(delta, playerPosition);
   }
 
   /**
-   * Persistent corpses: bodies stay on the ground bleeding out. When the
-   * roster overflows the cap, the oldest corpse sinks into the asphalt and
-   * is reclaimed — keeps the battlefield covered in bodies without unbounded
-   * memory or render cost.
+   * Persistent corpses: bodies stay on the ground bleeding out for ~10 seconds,
+   * then fade out when out of view or when the roster overflows.
+   * Keeps the battlefield covered in bodies without unbounded memory/render cost.
    */
-  private updateCorpses(delta: number) {
-    // Overflow: oldest corpses sink away
-    if (this.corpses.length > this.MAX_CORPSES) {
-      this.corpses[0].sinking = true;
-    }
+  private updateCorpses(delta: number, playerPosition: THREE.Vector3) {
+    const CORPSE_LIFETIME = 10.0; // seconds before fade starts
+    const FADE_DURATION = 3.0;    // seconds to fade out
+    const CULL_DISTANCE = 60.0;   // distance at which corpses fade if past lifetime
+    const MAX_CORPSES = this.MAX_CORPSES;
 
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const c = this.corpses[i];
+
+      // Track time since death
+      c.deathTime += delta;
+
+      // Overflow: oldest corpses sink away immediately
+      if (this.corpses.length > MAX_CORPSES) {
+        if (!this.corpses[0].sinking) {
+          this.corpses[0].sinking = true;
+        }
+      }
 
       if (c.sinking) {
         c.sinkTimer += delta;
@@ -999,7 +1010,6 @@ export class ZombieManager {
 
       // Long-lived pool: refresh the blood beneath the corpse so the stain
       // stays fresh around the body instead of fading out with the decals.
-      // Small satellites on a slow cadence — the big pool is stamped at death.
       c.repoolTimer -= delta;
       if (c.repoolTimer <= 0) {
         c.repoolTimer = 4.5 + Math.random() * 2.0;
@@ -1007,6 +1017,22 @@ export class ZombieManager {
           new THREE.Vector3((Math.random() - 0.5) * 2.2, 0.02, (Math.random() - 0.5) * 2.2)
         );
         ParticleSystem.spawnBloodDecal(poolPos, c.poolSize * (0.3 + Math.random() * 0.25), 25);
+      }
+
+      // Time-based corpse removal: after 10 seconds, start fading if far from player
+      if (c.deathTime > CORPSE_LIFETIME) {
+        const distToPlayer = c.mesh.position.distanceTo(playerPosition);
+        
+        // If far from player, start sinking/fading
+        if (distToPlayer > CULL_DISTANCE) {
+          c.sinking = true;
+          c.sinkTimer = 0;
+        }
+        // If very old (13+ seconds), force remove regardless of distance
+        else if (c.deathTime > CORPSE_LIFETIME + FADE_DURATION) {
+          c.sinking = true;
+          c.sinkTimer = 0;
+        }
       }
     }
   }
