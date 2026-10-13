@@ -42,6 +42,7 @@ import {
   getEffectiveDprCap,
   getViewDistanceRange,
   getZombieLimits,
+  getParticleScale,
   probeRefreshRate,
   type GraphicsConfig,
   type PostFXLevel,
