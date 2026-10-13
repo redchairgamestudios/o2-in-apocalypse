@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { soundFx } from '../audio/SoundEffects';
+import { GraphicsSettings, getParticleScale } from '../core/GraphicsSettings';
 
 export type WeatherType = 'HEAVY_RAIN' | 'ACID_STORM' | 'DENSE_FOG' | 'ASH_FALL' | 'CLEAR_NIGHT' | 'SUNNY_DAY' | 'AFTERNOON_RAIN' | 'GOLDEN_AFTERNOON';
 
@@ -150,6 +151,17 @@ export class WeatherSystem {
     this.ambientLightRef = ambientLight || null;
     if (moonLight) {
       this.baseMoonIntensity = moonLight.intensity;
+    }
+
+    // Weather particles are one CPU sim loop each per frame; scale the counts
+    // with the effects quality preset so weak phones keep the loop cheap.
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const weatherScale = (isTouch ? 0.5 : 1.0) * getParticleScale(GraphicsSettings.get().effectsQuality);
+    if (weatherScale < 1) {
+      this.rainCount = Math.round(this.rainCount * weatherScale);
+      this.emberCount = Math.round(this.emberCount * weatherScale);
+      this.splashCount = Math.round(this.splashCount * weatherScale);
     }
 
     // Secondary sudden lightning flash light

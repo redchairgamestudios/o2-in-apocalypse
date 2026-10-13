@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { PickupItem } from '../types';
 import { ProceduralTextures } from '../textures/ProceduralTextures';
 import { soundFx } from '../audio/SoundEffects';
+import { GraphicsSettings, getParticleScale } from '../core/GraphicsSettings';
 
 interface Particle {
   mesh: THREE.Mesh;
@@ -42,6 +43,13 @@ export class ParticleSystem {
   private static particles: Particle[] = [];
   private static decals: BloodDecal[] = [];
   private static decalIndex: number = 0;
+  /** Spawn-count multiplier from the effects quality preset (0.45..1.0). */
+  private static fxScale: number = 1.0;
+  // Pooled index regions (set in init, scale with the pool)
+  private static gibStartIndex: number = 210;
+  private static groundDecalEnd: number = 90;
+  private static wallDecalStart: number = 90;
+  private static wallDecalEnd: number = 120;
   private static pickupMeshes: Map<string, THREE.Group> = new Map();
   // Current mission environment — wall-blood raycasts anchor against these so
   // splatter decals only ever cling to real surfaces, never float in air
@@ -95,15 +103,22 @@ export class ParticleSystem {
     this.scene = scene;
 
     // Mobile: every active particle/decal is its own draw call with per-frame
-    // CPU simulation — pool sizes are cut roughly in half on touch devices.
+    // CPU simulation — pool sizes scale with the effects quality preset.
     const isTouch =
       'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
-    const PARTICLE_POOL = isTouch ? 140 : 300;
-    const GIB_START = isTouch ? 100 : 210;
-    const GIB_END = isTouch ? 120 : 260;
-    const DECAL_POOL = isTouch ? 60 : 140;
-    const WALL_DECAL_START = isTouch ? 40 : 90;
-    const WALL_DECAL_END = isTouch ? 52 : 120;
+    const effects = GraphicsSettings.get().effectsQuality;
+    this.fxScale = getParticleScale(effects);
+    const lowTier = isTouch && effects === 'LOW';
+    const PARTICLE_POOL = Math.round((lowTier ? 100 : isTouch ? 140 : 300) * this.fxScale);
+    // Gib index regions derive from the pool size (flesh gibs occupy the last
+    // ~30%, bone shards the back half of that region) so scaled pools stay
+    // consistent with getFreeParticle's gib scan.
+    const GIB_START = Math.round(PARTICLE_POOL * 0.7);
+    const GIB_END = GIB_START + Math.round((PARTICLE_POOL - GIB_START) * 0.5);
+    this.gibStartIndex = GIB_START;
+    const DECAL_POOL = Math.round((lowTier ? 44 : isTouch ? 60 : 140) * this.fxScale);
+    const WALL_DECAL_START = Math.round((lowTier ? 30 : isTouch ? 40 : 90) * this.fxScale);
+    const WALL_DECAL_END = Math.round((lowTier ? 38 : isTouch ? 52 : 120) * this.fxScale);
 
     this.bloodMat = new THREE.MeshBasicMaterial({ color: 0x990000 });
     this.darkBloodMat = new THREE.MeshStandardMaterial({
@@ -203,9 +218,15 @@ export class ParticleSystem {
     const decalGeo = new THREE.PlaneGeometry(1, 1);
     decalGeo.rotateX(-Math.PI / 2);
 
+    // Region bounds scale with the pool: ground pools first, wall splatters
+    // next, scorch marks last (spawn* functions read these — never hardcode).
+    this.groundDecalEnd = Math.round(DECAL_POOL * 0.64);
+    this.wallDecalStart = this.groundDecalEnd;
+    this.wallDecalEnd = Math.min(DECAL_POOL, this.wallDecalStart + Math.round(DECAL_POOL * 0.22));
+
     for (let i = 0; i < DECAL_POOL; i++) {
-      const isWall = i >= WALL_DECAL_START && i < WALL_DECAL_END;
-      const isScorch = i >= WALL_DECAL_END;
+      const isWall = i >= this.wallDecalStart && i < this.wallDecalEnd;
+      const isScorch = i >= this.wallDecalEnd;
       const geo = isWall ? new THREE.PlaneGeometry(1, 1) : decalGeo;
       const mat = isScorch
         ? this.scorchMat!.clone()
@@ -228,7 +249,7 @@ export class ParticleSystem {
 
   private static getFreeParticle(preferGib: boolean = false): Particle | null {
     if (preferGib) {
-      for (let i = 210; i < this.particles.length; i++) {
+      for (let i = this.gibStartIndex; i < this.particles.length; i++) {
         if (!this.particles[i].active) return this.particles[i];
       }
     }
@@ -246,7 +267,7 @@ export class ParticleSystem {
     isAcid: boolean = false,
     isShotgun: boolean = false
   ) {
-    const count = isShotgun ? 48 : (isHeadshot ? 38 : 22);
+    const count = Math.round((isShotgun ? 48 : (isHeadshot ? 38 : 22)) * this.fxScale);
     for (let i = 0; i < count; i++) {
       const p = this.getFreeParticle();
       if (!p) break;
@@ -362,7 +383,7 @@ export class ParticleSystem {
   public static spawnGoreGibs(pos: THREE.Vector3, dir: THREE.Vector3, count: number = 6) {
     soundFx.playDismemberment();
 
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < Math.round(count * this.fxScale); i++) {
       const p = this.getFreeParticle(true);
       if (!p) break;
 
@@ -391,19 +412,19 @@ export class ParticleSystem {
 
   // Expanding Ground Blood Pool Decal
   public static spawnBloodDecal(groundPos: THREE.Vector3, size: number = 2.0, life: number = 32 + Math.random() * 10) {
-    // Find free ground decal (indices 0..89)
+    // Find free ground decal
     let decal: BloodDecal | null = null;
-    for (let i = 0; i < 90; i++) {
-      const idx = (this.decalIndex + i) % 90;
+    for (let i = 0; i < this.groundDecalEnd; i++) {
+      const idx = (this.decalIndex + i) % this.groundDecalEnd;
       if (!this.decals[idx].mesh.visible) {
         decal = this.decals[idx];
-        this.decalIndex = (idx + 1) % 90;
+        this.decalIndex = (idx + 1) % this.groundDecalEnd;
         break;
       }
     }
     if (!decal) {
       // Reuse oldest
-      this.decalIndex = (this.decalIndex + 1) % 90;
+      this.decalIndex = (this.decalIndex + 1) % this.groundDecalEnd;
       decal = this.decals[this.decalIndex];
     }
     if (!decal) return;
@@ -424,14 +445,16 @@ export class ParticleSystem {
   // Charred blast-residue ground mark (explosions — never blood-colored)
   public static spawnScorchDecal(groundPos: THREE.Vector3, size: number = 3.0) {
     let decal: BloodDecal | null = null;
-    for (let i = 120; i < 140; i++) {
+    for (let i = this.wallDecalEnd; i < this.decals.length; i++) {
       if (!this.decals[i].mesh.visible) {
         decal = this.decals[i];
         break;
       }
     }
     if (!decal) {
-      decal = this.decals[120 + Math.floor(Math.random() * 20)];
+      const scorchStart = this.wallDecalEnd;
+      const scorchCount = this.decals.length - scorchStart;
+      decal = this.decals[scorchStart + Math.floor(Math.random() * scorchCount)];
     }
     if (!decal) return;
 
@@ -456,16 +479,17 @@ export class ParticleSystem {
     size: number = 1.6,
     exact: boolean = false
   ) {
-    // Find free wall decal (indices 90..119)
+    // Find free wall decal
     let decal: BloodDecal | null = null;
-    for (let i = 90; i < 120; i++) {
+    for (let i = this.wallDecalStart; i < this.wallDecalEnd; i++) {
       if (!this.decals[i].mesh.visible) {
         decal = this.decals[i];
         break;
       }
     }
     if (!decal) {
-      decal = this.decals[90 + Math.floor(Math.random() * 30)];
+      const wallCount = this.wallDecalEnd - this.wallDecalStart;
+      decal = this.decals[this.wallDecalStart + Math.floor(Math.random() * wallCount)];
     }
     if (!decal) return;
 
@@ -539,7 +563,7 @@ export class ParticleSystem {
   // Metal sparks / wall impact
   public static spawnSparks(pos: THREE.Vector3, normal?: THREE.Vector3) {
     const norm = normal || new THREE.Vector3(0, 1, 0);
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < Math.round(6 * this.fxScale); i++) {
       const p = this.getFreeParticle();
       if (!p) break;
 
@@ -589,7 +613,7 @@ export class ParticleSystem {
   // decal — used for the RPG's muzzle backblast so firing never stamps the
   // ground at the player's own feet.
   public static spawnExplosion(pos: THREE.Vector3, groundMark: boolean = true) {
-    for (let i = 0; i < 35; i++) {
+    for (let i = 0; i < Math.round(35 * this.fxScale); i++) {
       const p = this.getFreeParticle();
       if (!p) break;
 
@@ -761,5 +785,10 @@ export class ParticleSystem {
     this.pickupMeshes.clear();
     this.screenBloodIntensity = 0;
     this.screenSplats = [];
+  }
+
+  /** Returns the count of currently active (visible) particles for performance monitoring. */
+  public static getActiveParticleCount(): number {
+    return this.particles.filter(p => p.active).length;
   }
 }

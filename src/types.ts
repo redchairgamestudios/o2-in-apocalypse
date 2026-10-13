@@ -141,6 +141,7 @@ export interface GameSettings {
   graphicsQuality: 'LOW' | 'MEDIUM' | 'HIGH';
   showMinimap: boolean;
   showFps: boolean;
+  showPerformancePanel: boolean;
   vibrationEnabled: boolean;
   aimAssist: boolean;
 }

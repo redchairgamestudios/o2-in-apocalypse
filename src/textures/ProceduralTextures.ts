@@ -1,4 +1,13 @@
 import * as THREE from 'three';
+import { GraphicsSettings } from '../core/GraphicsSettings';
+
+// Texture resolution scales with the texture quality preset: LOW renders
+// every procedural surface texture at 256² instead of 512² — a quarter of
+// the fill bandwidth on tiled ground/wall materials. Read once at module
+// load, before any texture is generated and cached (changing it needs a
+// page reload to take effect; the settings UI says so).
+const LOW_TEX_TIER = GraphicsSettings.get().textureQuality === 'LOW';
+const TEX_SIZE = LOW_TEX_TIER ? 256 : 512;
 
 /**
  * High-performance procedural canvas texture generator for Three.js.
@@ -11,18 +20,18 @@ export class ProceduralTextures {
     if (this.cache.has('asphalt')) return this.cache.get('asphalt')!;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = TEX_SIZE;
+    canvas.height = TEX_SIZE;
     const ctx = canvas.getContext('2d')!;
 
     // Dark asphalt base
     ctx.fillStyle = '#222428';
-    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
 
     // Grain noise
     for (let i = 0; i < 3500; i++) {
-      const x = Math.random() * 512;
-      const y = Math.random() * 512;
+      const x = Math.random() * TEX_SIZE;
+      const y = Math.random() * TEX_SIZE;
       const shade = Math.floor(Math.random() * 40 + 20);
       ctx.fillStyle = `rgb(${shade},${shade + 2},${shade + 4})`;
       ctx.fillRect(x, y, 2.4, 2.4);
@@ -30,8 +39,8 @@ export class ProceduralTextures {
 
     // Dirt patches
     for (let i = 0; i < 15; i++) {
-      const cx = Math.random() * 512;
-      const cy = Math.random() * 512;
+      const cx = Math.random() * TEX_SIZE;
+      const cy = Math.random() * TEX_SIZE;
       const r = Math.random() * 60 + 20;
       const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
       grad.addColorStop(0, 'rgba(15, 12, 10, 0.45)');
@@ -46,8 +55,8 @@ export class ProceduralTextures {
     ctx.strokeStyle = '#111215';
     ctx.lineWidth = 1.2;
     for (let i = 0; i < 5; i++) {
-      let x = Math.random() * 512;
-      let y = Math.random() * 512;
+      let x = Math.random() * TEX_SIZE;
+      let y = Math.random() * TEX_SIZE;
       ctx.beginPath();
       ctx.moveTo(x, y);
       for (let s = 0; s < 6; s++) {
@@ -63,9 +72,9 @@ export class ProceduralTextures {
     ctx.lineWidth = 6;
     ctx.beginPath();
     ctx.moveTo(250, 0);
-    ctx.lineTo(250, 512);
+    ctx.lineTo(250, TEX_SIZE);
     ctx.moveTo(262, 0);
-    ctx.lineTo(262, 512);
+    ctx.lineTo(262, TEX_SIZE);
     ctx.stroke();
 
     // White dashed lane guidelines
@@ -74,9 +83,9 @@ export class ProceduralTextures {
     ctx.setLineDash([28, 24]);
     ctx.beginPath();
     ctx.moveTo(128, 0);
-    ctx.lineTo(128, 512);
+    ctx.lineTo(128, TEX_SIZE);
     ctx.moveTo(384, 0);
-    ctx.lineTo(384, 512);
+    ctx.lineTo(384, TEX_SIZE);
     ctx.stroke();
     ctx.setLineDash([]);
 
@@ -91,16 +100,16 @@ export class ProceduralTextures {
     if (this.cache.has('brick')) return this.cache.get('brick')!;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = TEX_SIZE;
+    canvas.height = TEX_SIZE;
     const ctx = canvas.getContext('2d')!;
 
     // Mortar background
     ctx.fillStyle = '#9c9589';
-    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
 
     const rows = 16;
-    const rowH = 512 / rows;
+    const rowH = TEX_SIZE / rows;
     const brickW = 64;
 
     for (let r = 0; r < rows; r++) {
@@ -108,7 +117,7 @@ export class ProceduralTextures {
       const h = rowH - 4;
       const offsetX = (r % 2 === 0) ? 0 : -brickW / 2;
 
-      for (let x = offsetX; x < 512 + brickW; x += brickW) {
+      for (let x = offsetX; x < TEX_SIZE + brickW; x += brickW) {
         // Natural brick color variation (reddish-terracotta to brownish charcoal)
         const redTone = Math.floor(Math.random() * 45 + 130);
         const greenTone = Math.floor(Math.random() * 30 + 55);
@@ -127,8 +136,8 @@ export class ProceduralTextures {
     // Weathering grime & water stains
     ctx.fillStyle = 'rgba(25, 20, 15, 0.25)';
     for (let i = 0; i < 6; i++) {
-      const sx = Math.random() * 512;
-      ctx.fillRect(sx, 0, Math.random() * 30 + 15, 512);
+      const sx = Math.random() * TEX_SIZE;
+      ctx.fillRect(sx, 0, Math.random() * 30 + 15, TEX_SIZE);
     }
 
     const tex = new THREE.CanvasTexture(canvas);
@@ -142,19 +151,19 @@ export class ProceduralTextures {
     if (this.cache.has('windows')) return this.cache.get('windows')!;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = TEX_SIZE;
+    canvas.height = TEX_SIZE;
     const ctx = canvas.getContext('2d')!;
 
     // Concrete facade base
     ctx.fillStyle = '#3a3e47';
-    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
 
     // Grid of windows
     const cols = 4;
     const rows = 4;
-    const padX = 512 / cols;
-    const padY = 512 / rows;
+    const padX = TEX_SIZE / cols;
+    const padY = TEX_SIZE / rows;
 
     for (let c = 0; c < cols; c++) {
       for (let r = 0; r < rows; r++) {
@@ -222,13 +231,13 @@ export class ProceduralTextures {
     if (this.cache.has('storefront')) return this.cache.get('storefront')!;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
+    canvas.width = TEX_SIZE;
     canvas.height = 256;
     const ctx = canvas.getContext('2d')!;
 
     // Brick/Granite lower base
     ctx.fillStyle = '#262930';
-    ctx.fillRect(0, 0, 512, 256);
+    ctx.fillRect(0, 0, TEX_SIZE, 256);
 
     // Signboard banner at top
     const signType = Math.random();
@@ -333,17 +342,17 @@ export class ProceduralTextures {
     if (this.cache.has('concrete')) return this.cache.get('concrete')!;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = TEX_SIZE;
+    canvas.height = TEX_SIZE;
     const ctx = canvas.getContext('2d')!;
 
     ctx.fillStyle = '#4a4d52';
-    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
 
     // Weathered cement speckles
     for (let i = 0; i < 3500; i++) {
-      const x = Math.random() * 512;
-      const y = Math.random() * 512;
+      const x = Math.random() * TEX_SIZE;
+      const y = Math.random() * TEX_SIZE;
       const c = Math.floor(Math.random() * 50 + 60);
       ctx.fillStyle = `rgb(${c},${c},${c})`;
       ctx.fillRect(x, y, 2.5, 2.5);
@@ -352,18 +361,18 @@ export class ProceduralTextures {
     // Water stains / grime streaks
     ctx.fillStyle = 'rgba(20, 20, 18, 0.35)';
     for (let i = 0; i < 8; i++) {
-      const sx = Math.random() * 512;
+      const sx = Math.random() * TEX_SIZE;
       const width = Math.random() * 40 + 10;
-      ctx.fillRect(sx, 0, width, 512);
+      ctx.fillRect(sx, 0, width, TEX_SIZE);
     }
 
     // Block seams / mortar lines
     ctx.strokeStyle = 'rgba(20, 20, 20, 0.7)';
     ctx.lineWidth = 2;
-    for (let y = 64; y < 512; y += 64) {
+    for (let y = 64; y < TEX_SIZE; y += 64) {
       ctx.beginPath();
       ctx.moveTo(0, y);
-      ctx.lineTo(512, y);
+      ctx.lineTo(TEX_SIZE, y);
       ctx.stroke();
     }
 
@@ -388,7 +397,7 @@ export class ProceduralTextures {
     ctx.fillStyle = '#18181b'; // Black
     const stripeWidth = 32;
     ctx.beginPath();
-    for (let x = -256; x < 512; x += stripeWidth * 2) {
+    for (let x = -256; x < TEX_SIZE; x += stripeWidth * 2) {
       ctx.moveTo(x, 0);
       ctx.lineTo(x + stripeWidth, 0);
       ctx.lineTo(x + stripeWidth + 256, 256);
@@ -562,18 +571,18 @@ export class ProceduralTextures {
     if (this.cache.has('realistic_flesh')) return this.cache.get('realistic_flesh')!;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = TEX_SIZE;
+    canvas.height = TEX_SIZE;
     const ctx = canvas.getContext('2d')!;
 
     // Pale mottled cadaverous base
     ctx.fillStyle = '#5c6454';
-    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
 
     // Organic noise grain
     for (let i = 0; i < 8000; i++) {
-      const x = Math.random() * 512;
-      const y = Math.random() * 512;
+      const x = Math.random() * TEX_SIZE;
+      const y = Math.random() * TEX_SIZE;
       const r = Math.floor(Math.random() * 50 + 60);
       const g = Math.floor(Math.random() * 50 + 75);
       const b = Math.floor(Math.random() * 40 + 55);
@@ -583,8 +592,8 @@ export class ProceduralTextures {
 
     // Bruised purple & dark necrosis patches
     for (let i = 0; i < 22; i++) {
-      const cx = Math.random() * 512;
-      const cy = Math.random() * 512;
+      const cx = Math.random() * TEX_SIZE;
+      const cy = Math.random() * TEX_SIZE;
       const r = Math.random() * 45 + 15;
       const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
       grad.addColorStop(0, Math.random() > 0.5 ? 'rgba(70, 25, 40, 0.65)' : 'rgba(30, 45, 25, 0.7)');
@@ -599,8 +608,8 @@ export class ProceduralTextures {
     ctx.strokeStyle = 'rgba(55, 15, 25, 0.7)';
     ctx.lineWidth = 1.4;
     for (let i = 0; i < 14; i++) {
-      let vx = Math.random() * 512;
-      let vy = Math.random() * 512;
+      let vx = Math.random() * TEX_SIZE;
+      let vy = Math.random() * TEX_SIZE;
       ctx.beginPath();
       ctx.moveTo(vx, vy);
       for (let s = 0; s < 7; s++) {
@@ -815,16 +824,16 @@ export class ProceduralTextures {
     if (this.cache.has(key)) return this.cache.get(key)!;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
+    canvas.width = TEX_SIZE;
     canvas.height = 256;
     const ctx = canvas.getContext('2d')!;
 
     ctx.fillStyle = colorHex;
-    ctx.fillRect(0, 0, 512, 256);
+    ctx.fillRect(0, 0, TEX_SIZE, 256);
 
     // Corrugated vertical ridges
     const ridgeWidth = 32;
-    for (let x = 0; x < 512; x += ridgeWidth) {
+    for (let x = 0; x < TEX_SIZE; x += ridgeWidth) {
       // Highlight side
       ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
       ctx.fillRect(x, 0, 6, 256);
@@ -846,7 +855,7 @@ export class ProceduralTextures {
 
     // Grime, rust and scrapes
     for (let i = 0; i < 4000; i++) {
-      const rx = Math.random() * 512;
+      const rx = Math.random() * TEX_SIZE;
       const ry = Math.random() * 256;
       ctx.fillStyle = Math.random() > 0.5 ? 'rgba(80, 35, 10, 0.25)' : 'rgba(10, 10, 10, 0.3)';
       ctx.fillRect(rx, ry, 2, 2);
@@ -864,19 +873,19 @@ export class ProceduralTextures {
     if (this.cache.has('plaza_cobble')) return this.cache.get('plaza_cobble')!;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = TEX_SIZE;
+    canvas.height = TEX_SIZE;
     const ctx = canvas.getContext('2d')!;
 
     // Stone base
     ctx.fillStyle = '#2d3036';
-    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
 
     // Paver grid
     const size = 64;
-    for (let y = 0; y < 512; y += size) {
+    for (let y = 0; y < TEX_SIZE; y += size) {
       const offsetX = (y / size) % 2 === 0 ? 0 : size / 2;
-      for (let x = -size / 2; x < 512 + size; x += size) {
+      for (let x = -size / 2; x < TEX_SIZE + size; x += size) {
         const px = x + offsetX;
         // Mortar line
         ctx.strokeStyle = '#18191d';
@@ -892,8 +901,8 @@ export class ProceduralTextures {
 
     // Weathering & blood stains
     for (let i = 0; i < 8; i++) {
-      const bx = Math.random() * 512;
-      const by = Math.random() * 512;
+      const bx = Math.random() * TEX_SIZE;
+      const by = Math.random() * TEX_SIZE;
       const br = Math.random() * 40 + 15;
       const grad = ctx.createRadialGradient(bx, by, 0, bx, by, br);
       grad.addColorStop(0, 'rgba(60, 5, 5, 0.45)');

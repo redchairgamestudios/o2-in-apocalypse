@@ -6,6 +6,8 @@ import { ParticleSystem } from '../effects/ParticleSystem';
 import { GunEffects } from '../effects/GunEffects';
 import { PostProcessing } from '../effects/PostProcessing';
 import { soundFx } from '../audio/SoundEffects';
+import { SaveManager } from '../core/SaveManager';
+import { GraphicsSettings, getViewDistanceRange } from '../core/GraphicsSettings';
 
 export interface PlayerInput {
   forward: number;
@@ -102,6 +104,14 @@ export class PlayerController {
     this.mapBounds = b;
   }
 
+  /** Live view-distance change from the graphics settings (no scene remount). */
+  public setViewDistance(far: number) {
+    if (Math.abs(far - this.camera.far) > 1) {
+      this.camera.far = far;
+      this.camera.updateProjectionMatrix();
+    }
+  }
+
   // Katana cleave swing state (1 -> 0 drives the slash animation)
   private meleeSwingT: number = 0;
 
@@ -111,7 +121,12 @@ export class PlayerController {
   }
 
   constructor() {
-    this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 250);
+    // Camera far plane follows the view-distance setting to reduce raster
+    // work; the fog always ends before the far plane so nothing pops.
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const farPlane = getViewDistanceRange(GraphicsSettings.get().viewDistance).far;
+    this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, farPlane);
     this.camera.position.copy(this.position);
     this.camera.rotation.order = 'YXZ';
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');

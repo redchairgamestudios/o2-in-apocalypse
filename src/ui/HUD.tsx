@@ -98,6 +98,19 @@ interface HUDProps {
     timestamp: number;
   }>;
   showFps?: boolean;
+  showPerformancePanel?: boolean;
+  rendererInfo?: {
+    drawCalls: number;
+    triangles: number;
+    lines: number;
+    points: number;
+    geometries: number;
+    textures: number;
+  };
+  particleCount?: number;
+  frameTime?: number;
+  deviceTier?: string;
+  resolutionScale?: number;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -134,11 +147,35 @@ export const HUD: React.FC<HUDProps> = ({
   onToggleAllyOrder,
   killFeed = [],
   showFps = false,
+  showPerformancePanel = false,
+  deviceTier,
+  resolutionScale,
 }) => {
   const radarCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [, setFrameTick] = useState<number>(0);
   const [fps, setFps] = useState<number>(60);
   const frameTimesRef = useRef<number[]>([]);
+  
+  // Performance panel state - rolling percentiles and averages
+  const [perfStats, setPerfStats] = useState<{
+    avgFps: number;
+    p1Fps: number;
+    p5Fps: number;
+    p99Fps: number;
+    avgFrameTime: number;
+    p99FrameTime: number;
+    sampleCount: number;
+  }>({
+    avgFps: 60,
+    p1Fps: 0,
+    p5Fps: 0,
+    p99Fps: 0,
+    avgFrameTime: 0,
+    p99FrameTime: 0,
+    sampleCount: 0,
+  });
+  const fpsHistoryRef = useRef<number[]>([]);
+  const frameTimeHistoryRef = useRef<number[]>([]);
 
   // Auto-hide objective after 5 seconds
   const [isObjectiveExpanded, setIsObjectiveExpanded] = useState<boolean>(!isMobile);
@@ -173,6 +210,39 @@ export const HUD: React.FC<HUDProps> = ({
         const duration = frameTimesRef.current[frameTimesRef.current.length - 1] - frameTimesRef.current[0];
         const currentFps = Math.round((frameTimesRef.current.length - 1) * 1000 / duration);
         setFps(currentFps);
+        
+        // Track rolling FPS and frame time history for percentile calculation
+        fpsHistoryRef.current.push(currentFps);
+        if (fpsHistoryRef.current.length > 300) fpsHistoryRef.current.shift(); // 5 minutes at 1Hz
+        
+        const frameTime = duration / (frameTimesRef.current.length - 1);
+        frameTimeHistoryRef.current.push(frameTime);
+        if (frameTimeHistoryRef.current.length > 300) frameTimeHistoryRef.current.shift();
+        
+        // Calculate percentiles every second
+        if (fpsHistoryRef.current.length >= 10) {
+          const sortedFps = [...fpsHistoryRef.current].sort((a, b) => a - b);
+          const sortedFrameTimes = [...frameTimeHistoryRef.current].sort((a, b) => a - b);
+          const count = sortedFps.length;
+          
+          const avgFps = Math.round(sortedFps.reduce((a, b) => a + b, 0) / count);
+          const p1Idx = Math.max(0, Math.floor(count * 0.01));
+          const p5Idx = Math.max(0, Math.floor(count * 0.05));
+          const p99Idx = Math.min(count - 1, Math.floor(count * 0.99));
+          
+          const avgFrameTime = sortedFrameTimes.reduce((a, b) => a + b, 0) / count;
+          const p99FrameTime = sortedFrameTimes[p99Idx];
+          
+          setPerfStats({
+            avgFps,
+            p1Fps: sortedFps[p1Idx],
+            p5Fps: sortedFps[p5Idx],
+            p99Fps: sortedFps[p99Idx],
+            avgFrameTime: Math.round(avgFrameTime * 100) / 100,
+            p99FrameTime: Math.round(p99FrameTime * 100) / 100,
+            sampleCount: count,
+          });
+        }
       }
       
       if (now - lastTick > 50) {
@@ -412,14 +482,100 @@ export const HUD: React.FC<HUDProps> = ({
 
       {/* TOP HEADER CONTAINER (safe-area aware for notched landscape phones) */}
       <div className="flex justify-between items-start hud-safe-pad">
-        {/* FPS Counter (top-left when enabled) */}
-        {showFps && (
+        {/* FPS Counter (top-left when enabled; hidden while the full perf panel is up — it shows FPS already) */}
+        {showFps && !showPerformancePanel && (
           <div className="absolute left-4 top-4 z-30 bg-black/85 border border-zinc-700 px-3 py-1.5 rounded shadow-lg backdrop-blur-xs font-mono text-xs">
             <div className="flex items-center gap-2 text-cyan-400">
               <span className="font-teko text-[10px] uppercase tracking-wider">FPS</span>
               <span className={`font-bold text-lg ${fps < 30 ? 'text-red-400' : fps < 45 ? 'text-amber-400' : 'text-green-400'}`}>
                 {fps}
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* PERFORMANCE PANEL (top-left, below FPS when enabled) */}
+        {showPerformancePanel && rendererInfo && (
+          <div className="absolute left-4 top-4 z-30 bg-black/90 border border-cyan-500/60 px-3 py-2 rounded shadow-lg backdrop-blur-xs font-mono text-[10px] text-cyan-300 min-w-[200px] max-w-[240px]">
+            <div className="flex items-center justify-between mb-1 border-b border-cyan-900/50 pb-1">
+              <span className="font-teko text-cyan-400 uppercase tracking-wider text-xs">PERF MONITOR</span>
+              <span className={`font-bold ${fps < 30 ? 'text-red-400' : fps < 45 ? 'text-amber-400' : 'text-green-400'}`}>
+                {fps} FPS
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 text-[9px]">
+              {/* FPS Stats */}
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Avg FPS</span>
+                <span className={`font-bold ${perfStats.avgFps < 30 ? 'text-red-400' : perfStats.avgFps < 45 ? 'text-amber-400' : 'text-green-400'}`}>
+                  {perfStats.avgFps}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">1% Low</span>
+                <span className={`font-bold ${perfStats.p1Fps < 20 ? 'text-red-400' : perfStats.p1Fps < 30 ? 'text-amber-400' : 'text-green-400'}`}>
+                  {perfStats.p1Fps}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">5% Low</span>
+                <span className={`font-bold ${perfStats.p5Fps < 25 ? 'text-red-400' : perfStats.p5Fps < 35 ? 'text-amber-400' : 'text-green-400'}`}>
+                  {perfStats.p5Fps}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Frame Time (avg)</span>
+                <span className="font-bold text-white">{perfStats.avgFrameTime} ms</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Frame Time (P99)</span>
+                <span className="font-bold text-white">{perfStats.p99FrameTime} ms</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Samples</span>
+                <span className="font-bold text-white">{perfStats.sampleCount}s</span>
+              </div>
+              
+              {/* Renderer Stats */}
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Draw Calls</span>
+                <span className="font-bold text-white">{rendererInfo.drawCalls}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Triangles</span>
+                <span className="font-bold text-white">{rendererInfo.triangles.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Lines</span>
+                <span className="font-bold text-white">{rendererInfo.lines.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Points</span>
+                <span className="font-bold text-white">{rendererInfo.points.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Geometries</span>
+                <span className="font-bold text-white">{rendererInfo.geometries}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Textures</span>
+                <span className="font-bold text-white">{rendererInfo.textures}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Active Zombies</span>
+                <span className="font-bold text-white">
+                  {zombieManager.zombies.filter(z => !z.isDead).length}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Particles</span>
+                <span className="font-bold text-white">{particleCount ?? 0}</span>
+              </div>
+            </div>
+            <div className="mt-2 pt-2 border-t border-cyan-900/50 text-[8px] text-zinc-500">
+              <div>Viewport: {window.innerWidth}×{window.innerHeight}</div>
+              <div>DPR: {window.devicePixelRatio.toFixed(2)}{resolutionScale !== undefined && resolutionScale < 1 ? ` · dyn ${Math.round(resolutionScale * 100)}%` : ''}</div>
+              {deviceTier && <div className="truncate">{deviceTier}</div>}
             </div>
           </div>
         )}

@@ -4,6 +4,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import type { PostFXLevel } from '../core/GraphicsSettings';
 
 /**
  * Cinematic post-processing stack:
@@ -110,12 +111,18 @@ export class PostProcessing {
     renderer: THREE.WebGLRenderer,
     scene: THREE.Scene,
     camera: THREE.Camera,
-    quality: 'LOW' | 'MEDIUM' | 'HIGH'
+    level: PostFXLevel
   ) {
     this.dispose();
     this.renderer = renderer;
     this.scene = scene;
     this.camera = camera;
+
+    // OFF renders straight to the default framebuffer — zero fullscreen passes.
+    if (level === 'OFF') {
+      this.enabled = false;
+      return;
+    }
 
     const w = renderer.domElement.clientWidth || window.innerWidth;
     const h = renderer.domElement.clientHeight || window.innerHeight;
@@ -128,10 +135,12 @@ export class PostProcessing {
 
     // Bloom operates on pre-tonemap linear HDR: threshold must sit above 1.0
     // so only true emissives (muzzle flashes, lit windows, fires) glow.
-    // HIGH only: bloom is a multi-pass fullscreen kernel — far too heavy for
-    // MEDIUM/mobile GPUs. (SMAA is omitted entirely: the renderer is created
-    // with antialias:true, so a second AA pass is pure overdraw.)
-    if (quality === 'HIGH') {
+    // Bloom is a multi-pass fullscreen kernel — desktop MEDIUM/HIGH only.
+    // Touch devices cap out at the single grade pass (LOW) regardless of the
+    // selected level: phones spend their fragment budget on resolution.
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    if ((level === 'MEDIUM' || level === 'HIGH') && !isTouch) {
       this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.55, 0.5, 1.12);
       this.composer.addPass(this.bloomPass);
     }
@@ -141,21 +150,12 @@ export class PostProcessing {
     this.gradePass = new ShaderPass(CinematicGradeShader);
     this.composer.addPass(this.gradePass);
 
-    // Composer only on desktop HIGH. MEDIUM/LOW render direct to canvas: on a
-    // mid-range mobile GPU the three fullscreen passes (HDR target + tonemap
-    // blit + grade pass with 3-tap chromatic aberration) cost more fragment
-    // fill than the scene itself. Mobile HIGH also renders direct — phones
-    // spend their budget on resolution instead (see getRenderPixelRatio in
-    // App.tsx). Damage/low-health feedback on those tiers comes from the
-    // HUD's red overlay instead of the shader grade.
-    const isTouch =
-      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
-    this.enabled = quality === 'HIGH' && !isTouch;
+    this.enabled = true;
   }
 
-  public static setQuality(quality: 'LOW' | 'MEDIUM' | 'HIGH') {
+  public static setQuality(level: PostFXLevel) {
     if (!this.renderer || !this.scene || !this.camera) return;
-    this.init(this.renderer, this.scene, this.camera, quality);
+    this.init(this.renderer, this.scene, this.camera, level);
   }
 
   public static setSize(w: number, h: number) {

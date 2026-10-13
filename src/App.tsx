@@ -7,6 +7,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GameScreen, PlayerSaveData, HitResult, GameStats, WeaponTypeKey, KillFeedEntry, AllyOrder } from './types';
 import { SaveManager } from './core/SaveManager';
+import { describeDeviceTier } from './core/DeviceTier';
 import { EnvironmentBuilder, EnvironmentResult } from './models/EnvironmentBuilder';
 import { PlayerController, PlayerInput } from './player/PlayerController';
 import { ZombieManager } from './zombies/ZombieManager';
@@ -34,6 +35,16 @@ import { AirStrikeManager } from './tactical/AirStrikeManager';
 import { AllySoldier } from './tactical/AllySoldier';
 import { DroneManager } from './tactical/DroneManager';
 import { Mission10EndingCutscene } from './cutscene/Mission10EndingCutscene';
+import {
+  GraphicsSettings,
+  getEffectiveDprCap,
+  getViewDistanceRange,
+  getZombieLimits,
+  probeRefreshRate,
+  type GraphicsConfig,
+  type PostFXLevel,
+} from './core/GraphicsSettings';
+import { AdaptivePerformance } from './core/AdaptivePerformance';
 
 // UI Components
 import { HUD } from './ui/HUD';
@@ -52,19 +63,20 @@ import { LoadingScreen } from './ui/LoadingScreen';
 import { Coins } from 'lucide-react';
 
 /**
- * Mobile render resolution: a flat pixelRatio of 1.0 renders at CSS-pixel
- * size (~390px wide in portrait) and upscales ~2.75x to the physical panel —
- * an unreadably blurry image regardless of graphics settings. Instead clamp
- * the device pixel ratio per quality tier now that the heavy bottlenecks
- * (post-processing, zombie/material/particle caps) are optimized away.
+ * Genuine render-resolution scaling: the internal WebGL framebuffer is
+ * devicePixelRatio × renderScale, capped conservatively per device class.
+ * The CSS canvas size is untouched — the compositor upscales, no black
+ * borders, no layout change.
+ *
+ * `dynamicScale` is the session-local Adaptive Performance overlay (1.0 when
+ * disabled/healthy).
  */
-function getRenderPixelRatio(quality: 'LOW' | 'MEDIUM' | 'HIGH', isTouch: boolean): number {
+function computeEffectiveDpr(renderScale: number, dynamicScale: number): number {
   const deviceDpr = window.devicePixelRatio || 1;
-  if (isTouch) {
-    const maxRatio = quality === 'HIGH' ? 2.0 : quality === 'MEDIUM' ? 1.5 : 1.0;
-    return Math.min(deviceDpr, maxRatio);
-  }
-  return Math.min(deviceDpr, quality === 'HIGH' ? 1.25 : 1.0);
+  const isTouch =
+    'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+  const cap = getEffectiveDprCap(isTouch);
+  return Math.min(deviceDpr * renderScale * dynamicScale, cap);
 }
 
 /**
@@ -135,6 +147,17 @@ export default function App() {
   const [isFlashlightOn, setIsFlashlightOn] = useState<boolean>(false);
   const [showDebug, setShowDebug] = useState<boolean>(false);
   const [fps, setFps] = useState<number>(60);
+  const [frameTime, setFrameTime] = useState<number>(0);
+  const [rendererInfo, setRendererInfo] = useState<{
+    drawCalls: number;
+    triangles: number;
+    lines: number;
+    points: number;
+    geometries: number;
+    textures: number;
+  }>({ drawCalls: 0, triangles: 0, lines: 0, points: 0, geometries: 0, textures: 0 });
+  const [particleCount, setParticleCount] = useState<number>(0);
+  const [resScale, setResScale] = useState<number>(1.0);
   const [hitFeedback, setHitFeedback] = useState<{ hit: boolean; isHeadshot: boolean; timestamp: number }>({
     hit: false,
     isHeadshot: false,
@@ -193,35 +216,7 @@ export default function App() {
     };
   }, [screen]);
 
-  // Apply graphics quality changes live: post FX, resolution scale & shadow resolution
-  useEffect(() => {
-    const quality = saveData.settings.graphicsQuality;
-    PostProcessing.setQuality(quality);
-    const renderer = rendererRef.current;
-    if (renderer) {
-      const touch = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
-      const baseDpr = getRenderPixelRatio(quality, touch);
-      baseDprRef.current = baseDpr;
-      // Reset to the tier's full resolution; the adaptive dynamic-resolution
-      // loop re-applies any needed downscale within seconds if FPS demands it.
-      renderer.setPixelRatio(baseDpr);
-    }
-    const moon = moonLightRef.current;
-    if (moon) {
-      const res = quality === 'HIGH' ? 1024 : 512;
-      if (moon.shadow.mapSize.width !== res) {
-        moon.shadow.mapSize.width = res;
-        moon.shadow.mapSize.height = res;
-        if (moon.shadow.map) {
-          moon.shadow.map.dispose();
-          (moon.shadow as unknown as { map: THREE.WebGLRenderTarget | null }).map = null;
-        }
-      }
-      // Shadow map is static (env-only casters): re-render once after resize
-      moon.shadow.needsUpdate = true;
-    }
-  }, [saveData.settings.graphicsQuality]);
-
+  
   // Core Engine Instances (persisted across renders)
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -308,13 +303,18 @@ export default function App() {
     const initW = containerRef.current.clientWidth || window.innerWidth || 800;
     const initH = containerRef.current.clientHeight || window.innerHeight || 600;
     renderer.setSize(initW, initH);
-    const dpr = getRenderPixelRatio(saveData.settings.graphicsQuality, isTouchDevice);
-    baseDprRef.current = dpr;
-    renderer.setPixelRatio(dpr);
-    renderer.shadowMap.enabled = saveData.settings.graphicsQuality !== 'LOW';
+    baseDprRef.current = computeEffectiveDpr(GraphicsSettings.get().renderScale, 1.0);
+    renderer.setPixelRatio(baseDprRef.current);
+    renderer.shadowMap.enabled = GraphicsSettings.get().shadows;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.12;
+    // We control render order via the static batcher + post-processing passes:
+    // skipping the per-frame object sort saves ~0.2ms CPU on mobile.
+    renderer.sortObjects = false;
+    // We read renderer.info in the perf panel; disable the auto-reset so our
+    // 30-frame samples are stable (it only clears on the next render() call).
+    renderer.info.autoReset = false;
     rendererRef.current = renderer;
 
     renderer.domElement.style.display = 'block';
@@ -346,15 +346,20 @@ export default function App() {
     const moonLight = new THREE.DirectionalLight(0xdbe8ff, 1.85);
     moonLight.position.set(25, 55, 15);
     moonLight.castShadow = true;
-    const shadowRes = saveData.settings.graphicsQuality === 'HIGH' ? 1024 : 512;
+    const config = GraphicsSettings.get();
+    const shadowRes = config.shadows ? 1024 : 512;
     moonLight.shadow.mapSize.width = shadowRes;
     moonLight.shadow.mapSize.height = shadowRes;
+    // LOW touch: smaller ortho frustum = fewer shadow pixels & tighter depth
+    // precision; the playable corridor fits well inside ±32 / 40 / -40.
+    const lowTier = isTouchDevice;
+    const isLow = lowTier && config.effectsQuality === 'LOW';
     moonLight.shadow.camera.near = 5;
-    moonLight.shadow.camera.far = 160;
-    moonLight.shadow.camera.left = -40;
-    moonLight.shadow.camera.right = 40;
-    moonLight.shadow.camera.top = 50;
-    moonLight.shadow.camera.bottom = -50;
+    moonLight.shadow.camera.far = isLow ? 120 : 160;
+    moonLight.shadow.camera.left = isLow ? -32 : -40;
+    moonLight.shadow.camera.right = isLow ? 32 : 40;
+    moonLight.shadow.camera.top = isLow ? 40 : 50;
+    moonLight.shadow.camera.bottom = isLow ? -40 : -50;
     moonLight.shadow.bias = -0.0004;
     moonLight.layers.enable(1);
     scene.add(moonLight);
@@ -390,7 +395,8 @@ export default function App() {
       directionalPos: [25, 55, 15],
     });
     GunEffects.init(scene);
-    PostProcessing.init(renderer, scene, player.camera, saveData.settings.graphicsQuality);
+    const initialConfig = GraphicsSettings.get();
+    PostProcessing.init(renderer, scene, player.camera, initialConfig.postProcessing);
 
     // Stream the realistic skinned zombie roster, boss sculpt, heavy weapon, helicopter & squad character
     GltfZombieFactory.preload();
@@ -485,29 +491,92 @@ export default function App() {
     let lastFpsUpdate = performance.now();
     let animationFrameId: number;
 
-    // Adaptive dynamic resolution (touch devices only): if FPS stays very low
-    // for several consecutive seconds, render at a lower internal resolution
-    // and let the browser upscale. Deliberately conservative — a momentary
-    // hitch must never leave the game permanently blurred, so the scale resets
-    // to full whenever gameplay stops and recovers aggressively whenever FPS
-    // is merely acceptable (not just excellent).
-    let resolutionScale = 1.0;
-    // Floors are relative to the tier's base ratio, which is already sharp
-    // (HIGH base 2.0): scaling to 0.6 of it still beats the old flat 1.0
-    // render, so quality can safely degrade further under load.
-    const minResScale = saveData.settings.graphicsQuality === 'HIGH' ? 0.6 : 0.7;
-    let badSeconds = 0;
-    let goodSeconds = 0;
-    let playingSeconds = 0;
-
-    const applyResolutionScale = (scale: number) => {
-      resolutionScale = scale;
-      renderer.setPixelRatio(baseDprRef.current * scale);
-      const cw = containerRef.current?.clientWidth || window.innerWidth;
-      const ch = containerRef.current?.clientHeight || window.innerHeight;
-      renderer.setSize(cw, ch, false);
-      PostProcessing.setSize(cw, ch);
+    // Reusable vector pool: eliminates per-frame new THREE.Vector3() allocations
+    // in the main loop and all downstream manager updates. One allocation per
+    // vector, then .set() / .copy() reuse — the GC never sees them.
+    const v3pool: THREE.Vector3[] = [
+      new THREE.Vector3(), // v3pool[0] - player forward
+      new THREE.Vector3(), // v3pool[1] - temp position / direction
+      new THREE.Vector3(), // v3pool[2] - grenade/turret/rocket temp
+      new THREE.Vector3(), // v3pool[3] - air strike / drone temp
+      new THREE.Vector3(), // v3pool[4] - spare
+    ];
+    let v3poolIdx = 0;
+    const getV3 = () => {
+      const v = v3pool[v3poolIdx];
+      v3poolIdx = (v3poolIdx + 1) % v3pool.length;
+      return v;
     };
+
+    // Staggered update cadence: non-critical systems (weather, sky dome,
+    // particle sim, gun VFX sim) don't need 60Hz — on touch devices we skip
+    // frames to save CPU. LOW = every 3rd frame, MEDIUM = every 2nd,
+    // HIGH/desktop = every frame. The delta passed is still per-frame so
+    // motion stays smooth; internal timers just accumulate the skipped delta.
+    let staggerCounter = 0;
+    const staggerStep = isTouchDevice ? (GraphicsSettings.get().effectsQuality === 'LOW' ? 3 : 2) : 1;
+
+    // Adaptive Performance system: watches sustained frame times and, only when
+    // the user opted in, trades render scale (then non-essential effects) for FPS.
+    // Reacts to persistent degradation (3 consecutive bad seconds), never a single hitch.
+    // Recovers cautiously (5 consecutive good seconds, one step at a time).
+    // Hysteresis + cooldown prevent up/down oscillation.
+    const adaptivePerf = new AdaptivePerformance();
+    adaptivePerf.setFpsCap(GraphicsSettings.get().fpsTarget);
+
+    // Subscribe to GraphicsSettings changes for live updates without restart
+    const unsubGraphics = GraphicsSettings.subscribe((config: GraphicsConfig) => {
+      const renderer = rendererRef.current;
+      if (!renderer) return;
+      
+      // Update renderer pixel ratio
+      baseDprRef.current = computeEffectiveDpr(config.renderScale, adaptivePerf.state.dynamicScale);
+      renderer.setPixelRatio(baseDprRef.current);
+      
+      // Update shadow map resolution
+      const moon = moonLightRef.current;
+      if (moon) {
+        const res = config.shadows ? 1024 : 512;
+        if (moon.shadow.mapSize.width !== res) {
+          moon.shadow.mapSize.width = res;
+          moon.shadow.mapSize.height = res;
+          if (moon.shadow.map) {
+            moon.shadow.map.dispose();
+            (moon.shadow as unknown as { map: THREE.WebGLRenderTarget | null }).map = null;
+          }
+        }
+        moon.shadow.needsUpdate = true;
+      }
+      
+      // Update post-processing quality
+      const fxLevel = (() => {
+        switch (config.postProcessing) {
+          case 'OFF': return 'OFF';
+          case 'LOW': return 'LOW';
+          case 'MEDIUM': return 'MEDIUM';
+          case 'HIGH': return 'HIGH';
+        }
+      })();
+      PostProcessing.setQuality(fxLevel);
+      
+      // Update zombie limits
+      const touch = isTouchDevice;
+      const { maxAlive, maxCorpses } = getZombieLimits(config.effectsQuality, touch);
+      zombieManagerRef.current?.setLimits(maxAlive, maxCorpses);
+      
+      // Update view distance
+      const { far } = getViewDistanceRange(config.viewDistance);
+      playerRef.current?.setViewDistance(far);
+      
+      // Update FPS target for adaptive performance
+      adaptivePerf.setFpsCap(config.fpsTarget);
+    });
+
+    // Subscribe to adaptive performance notifications for HUD toast
+    const unsubAdaptive = GraphicsSettings.onAdaptiveAdjust((msg: string) => {
+      // Dispatch a custom event for the HUD to pick up
+      window.dispatchEvent(new CustomEvent('adaptive-performance', { detail: { message: msg } }));
+    });
 
     const animate = (time: number) => {
       animationFrameId = requestAnimationFrame(animate);
@@ -523,45 +592,57 @@ export default function App() {
         frameCount = 0;
         lastFpsUpdate = time;
 
-        if (isTouchDevice) {
-          if (screenRef.current !== 'PLAYING') {
-            // Menus/cutscenes: restore full resolution immediately so the
-            // scale can never get stuck low between sessions.
-            badSeconds = 0;
-            goodSeconds = 0;
-            playingSeconds = 0;
-            if (resolutionScale !== 1.0) applyResolutionScale(1.0);
-          } else {
-            playingSeconds++;
-            // Ignore the first seconds of a session (level load, shader compile)
-            if (playingSeconds > 4) {
-              if (measuredFps < 28) {
-                // Two consecutive bad seconds before degrading quality
-                badSeconds++;
-                goodSeconds = 0;
-                if (badSeconds >= 2 && resolutionScale > minResScale) {
-                  applyResolutionScale(Math.max(minResScale, resolutionScale - 0.1));
-                }
-              } else if (measuredFps >= 34) {
-                // 34+ is playable: claw resolution back within 2 seconds
-                goodSeconds++;
-                badSeconds = 0;
-                if (goodSeconds >= 2 && resolutionScale < 1.0) {
-                  applyResolutionScale(Math.min(1.0, resolutionScale + 0.15));
-                }
-              } else {
-                badSeconds = Math.max(0, badSeconds - 1);
-              }
-            }
+        // Adaptive Performance sampling (runs every second)
+        if (GraphicsSettings.get().adaptivePerformance) {
+          const toastMsg = adaptivePerf.sample(measuredFps, screenRef.current === 'PLAYING');
+          if (toastMsg) {
+            GraphicsSettings.notifyAdaptive(toastMsg);
+          }
+          // Apply dynamic resolution scale each frame
+          const renderer = rendererRef.current;
+          if (renderer) {
+            const dynamicScale = adaptivePerf.state.dynamicScale;
+            const effectiveDpr = computeEffectiveDpr(GraphicsSettings.get().renderScale, dynamicScale);
+            renderer.setPixelRatio(effectiveDpr);
+            setResScale(dynamicScale);
           }
         }
       }
 
-      // Update Particles, Dynamic Weather, Sky & Gun VFX Simulation
-      ParticleSystem.update(delta);
-      WeatherSystem.update(delta, player.position);
-      SkyDome.update(player.camera);
-      GunEffects.update(delta);
+      // Performance panel stats, throttled to every 30 frames so React re-renders
+      // never run per-frame (the panel is dev-facing; 0.5s staleness is fine)
+      if (frameCount % 30 === 0) {
+        setFrameTime(delta * 1000);
+        if (renderer.info) {
+          setRendererInfo({
+            drawCalls: renderer.info.render.calls,
+            triangles: renderer.info.render.triangles,
+            lines: renderer.info.render.lines,
+            points: renderer.info.render.points,
+            geometries: renderer.info.memory.geometries,
+            textures: renderer.info.memory.textures,
+          });
+        }
+        setParticleCount(ParticleSystem.getActiveParticleCount());
+      }
+
+      // Staggered update: non-critical sims run at reduced cadence on touch
+      staggerCounter++;
+      const runStaggered = staggerCounter % staggerStep === 0;
+
+      if (runStaggered) {
+        // delta is per-frame; internal accumulators in Weather/Particle/Sky/Gun
+        // already scale by the delta they receive, so passing delta * staggerStep
+        // keeps their internal timers correct across the skipped frames.
+        const staggerDelta = delta * staggerStep;
+        ParticleSystem.update(staggerDelta);
+        WeatherSystem.update(staggerDelta, player.position);
+        SkyDome.update(player.camera);
+        GunEffects.update(staggerDelta);
+      } else {
+        // Even on skipped frames, camera-relative SkyDome still needs the camera
+        SkyDome.update(player.camera);
+      }
 
       // Check current screen mode using screenRef (avoids stale closures)
       if (screenRef.current === 'CUTSCENE') {
@@ -725,7 +806,7 @@ export default function App() {
         }
 
         // Update Zombie AI & Attacks with field of view and flashlight detection
-        const playerForward = new THREE.Vector3();
+        const playerForward = getV3();
         player.camera.getWorldDirection(playerForward);
         zombieManager.update(
           delta,
@@ -972,6 +1053,8 @@ export default function App() {
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
       resizeObserver.disconnect();
+      unsubGraphics();
+      unsubAdaptive();
       renderer.dispose();
       if (containerRef.current) {
         containerRef.current.innerHTML = '';
@@ -1110,6 +1193,11 @@ export default function App() {
       if (e.code === 'F3') {
         e.preventDefault();
         setShowDebug((prev) => !prev);
+      }
+      if (e.code === 'F4') {
+        e.preventDefault();
+        SaveManager.updateSettings({ showPerformancePanel: !SaveManager.get().settings.showPerformancePanel });
+        setSaveData({ ...SaveManager.get() });
       }
 
       // Quick weapon hotkeys 1-9
@@ -1748,6 +1836,12 @@ export default function App() {
           onToggleAllyOrder={handleToggleAllyOrder}
           killFeed={killFeed}
           showFps={saveData.settings.showFps}
+          showPerformancePanel={saveData.settings.showPerformancePanel}
+          rendererInfo={rendererInfo}
+          particleCount={particleCount}
+          frameTime={frameTime}
+          deviceTier={describeDeviceTier()}
+          resolutionScale={resScale}
         />
       )}
 

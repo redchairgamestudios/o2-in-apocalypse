@@ -6,6 +6,8 @@ import { ZOMBIE_DEFINITIONS } from '../data/zombies';
 import { soundFx } from '../audio/SoundEffects';
 import { ParticleSystem } from '../effects/ParticleSystem';
 import { NavCollision } from '../core/NavCollision';
+import { SaveManager } from '../core/SaveManager';
+import { GraphicsSettings, getZombieLimits } from '../core/GraphicsSettings';
 import { NarrowPathSpawn } from '../models/EnvironmentBuilder';
 
 interface CorpseRecord {
@@ -32,9 +34,8 @@ export class ZombieManager {
   // Mobile perf: every zombie is a full skinned GLTF rig with its own mixer —
   // hard-cap the concurrent alive count there so hordes can't stack 20+ rigs
   // (the single biggest GPU/CPU cost on mid-range phones).
-  private readonly MAX_ALIVE: number;
-  private readonly MAX_CORPSES: number;
-
+  private MAX_ALIVE: number;
+  private MAX_CORPSES: number;
   public pickups: PickupItem[] = [];
 
   // Rolling frame counter for far-zombie LOD staggering
@@ -63,8 +64,18 @@ export class ZombieManager {
     this.scene = scene;
     const isTouch =
       'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
-    this.MAX_ALIVE = isTouch ? 10 : 24;
-    this.MAX_CORPSES = isTouch ? 8 : 22;
+    // Cap scales with the effects quality preset (centralized GraphicsSettings):
+    // SMOOTH holds the horde to ~6 concurrent rigs — the single biggest
+    // GPU/CPU cost on mid-range phones. Desktop headroom is unchanged.
+    const limits = getZombieLimits(GraphicsSettings.get().effectsQuality, isTouch);
+    this.MAX_ALIVE = limits.maxAlive;
+    this.MAX_CORPSES = limits.maxCorpses;
+  }
+
+  /** Live cap change from the graphics settings UI (no scene remount). */
+  public setLimits(maxAlive: number, maxCorpses: number) {
+    this.MAX_ALIVE = maxAlive;
+    this.MAX_CORPSES = maxCorpses;
   }
 
   public setSpawnPoints(points: THREE.Vector3[]) {
@@ -544,6 +555,16 @@ export class ZombieManager {
       const farCull = !z.isBoss && distToPlayer > 85;
       if (z.mesh.visible === farCull) z.mesh.visible = !farCull;
       if (farCull) continue;
+
+      // FAR-AI LOD: beyond 70m (but still visible up to 85m), skip full AI/state
+      // updates every other frame. These zombies are too far to meaningfully
+      // interact with the player. Bosses and colossi never skip AI.
+      if (distToPlayer > 70 && !z.isBoss && z.type !== 'colossus' && (this.frame + i) % 2 !== 0) {
+        // Still apply position bounds so they don't drift off-map
+        z.mesh.position.x = Math.max(-115, Math.min(115, z.mesh.position.x));
+        z.mesh.position.z = Math.max(-145, Math.min(155, z.mesh.position.z));
+        continue;
+      }
 
       // Target determination: player or low recon drone (when altitude <= 3.8m)
       let targetPos = playerPosition;

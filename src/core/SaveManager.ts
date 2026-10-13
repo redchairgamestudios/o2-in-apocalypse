@@ -1,4 +1,5 @@
 import { PlayerSaveData, WeaponTypeKey, GameSettings, DroneUpgrades } from '../types';
+import { detectDefaultQuality } from './DeviceTier';
 
 const STORAGE_KEY = 'deadzone_outbreak_save_v1';
 
@@ -17,9 +18,11 @@ const DEFAULT_SETTINGS: GameSettings = {
   touchSensitivity: 1.2,
   invertY: false,
   invertX: false,
+  // Overwritten with the detected device tier for brand-new saves (see load())
   graphicsQuality: 'HIGH',
   showMinimap: true,
   showFps: false,
+  showPerformancePanel: false,
   vibrationEnabled: true,
   aimAssist: true,
 };
@@ -87,8 +90,11 @@ export class SaveManager {
             ...(parsed.settings || {}),
           },
         };
+        // Existing saves: honor whatever the player chose (no silent downgrade)
       } else {
         this.data = JSON.parse(JSON.stringify(DEFAULT_SAVE_DATA));
+        // First launch on this device: start at the quality its hardware can hold
+        this.data.settings.graphicsQuality = detectDefaultQuality();
         this.save();
       }
     } catch {
