@@ -1,8 +1,12 @@
 import * as THREE from 'three';
+import { GraphicsSettings } from '../core/GraphicsSettings';
 
 /**
  * Atmospheric gradient sky dome with sun/moon disc and horizon haze.
  * Follows the camera so it always renders inside the far plane.
+ * 
+ * MOBILE OPTIMIZATION: On LOW preset, reduce geometry subdivisions and star count
+ * to minimize vertex/fragment overhead.
  */
 const SkyShader = {
   uniforms: {
@@ -59,7 +63,11 @@ export class SkyDome {
   public static init(scene: THREE.Scene) {
     if (this.mesh) return;
 
-    const geo = new THREE.SphereGeometry(210, 32, 20);
+    // REDUCED geometry on LOW preset (fewer vertices = less vertex shader work)
+    const effects = GraphicsSettings.get().effectsQuality;
+    const isLow = effects === 'LOW';
+    const geo = new THREE.SphereGeometry(210, isLow ? 16 : 32, isLow ? 10 : 20);
+    
     this.material = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.clone(SkyShader.uniforms),
       vertexShader: SkyShader.vertexShader,
@@ -74,8 +82,8 @@ export class SkyDome {
     this.mesh.frustumCulled = false;
     scene.add(this.mesh);
 
-    // Faint drifting ash/ember motes high in the sky box (subtle vertical streaks)
-    const starCount = 420;
+    // REDUCED star count on LOW preset
+    const starCount = isLow ? 120 : 420;
     const positions = new Float32Array(starCount * 3);
     for (let i = 0; i < starCount; i++) {
       positions[i * 3] = (Math.random() - 0.5) * 360;
@@ -147,5 +155,36 @@ export class SkyDome {
     this.mesh = null;
     this.stars = null;
     this.material = null;
+  }
+
+  /** Reinitialize sky dome geometry when graphics quality changes. */
+  public static reinitGeometry(): void {
+    if (!this.mesh) return;
+    
+    const effects = GraphicsSettings.get().effectsQuality;
+    const isLow = effects === 'LOW';
+    
+    // Dispose old
+    this.mesh.geometry.dispose();
+    if (this.stars) {
+      this.stars.geometry.dispose();
+      (this.stars.material as THREE.Material).dispose();
+    }
+    
+    // Recreate with new subdivisions
+    const geo = new THREE.SphereGeometry(210, isLow ? 16 : 32, isLow ? 10 : 20);
+    this.mesh.geometry = geo;
+    
+    // Recreate stars
+    const starCount = isLow ? 120 : 420;
+    const positions = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * 360;
+      positions[i * 3 + 1] = Math.random() * 150 + 40;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 360;
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    this.stars!.geometry = starGeo;
   }
 }

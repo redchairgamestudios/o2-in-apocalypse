@@ -39,6 +39,16 @@ export class GltfZombieFactory {
   // Shared per-variant zombie materials (key: source material uuid + tint hex)
   private static tintMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
 
+  /** Public accessor for VAT baking */
+  public static getTemplate(): THREE.Group | null {
+    return this.template;
+  }
+
+  /** Public accessor for VAT baking */
+  public static getClips(): THREE.AnimationClip[] {
+    return this.clips;
+  }
+
   public static preload(): Promise<void> {
     if (this.ready) return Promise.resolve();
     if (this.loadPromise) return this.loadPromise;

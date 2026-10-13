@@ -5,12 +5,16 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import type { PostFXLevel } from '../core/GraphicsSettings';
+import { GraphicsSettings } from '../core/GraphicsSettings';
 
 /**
  * Cinematic post-processing stack:
  * HDR render -> UnrealBloom (emissive windows, muzzle flashes, fires, lasers)
  * -> ACES tonemap output -> SMAA -> film grade (vignette, chromatic aberration,
  * damage distortion, film grain, color grade).
+ * 
+ * MOBILE OPTIMIZATION: On touch devices, composer renders at 50% resolution
+ * and upscales via OutputPass, saving massive fill rate.
  */
 const CinematicGradeShader = {
   uniforms: {
@@ -126,9 +130,17 @@ export class PostProcessing {
 
     const w = renderer.domElement.clientWidth || window.innerWidth;
     const h = renderer.domElement.clientHeight || window.innerHeight;
+    
+    // MOBILE OPTIMIZATION: Render post-processing at 50% resolution on touch devices
+    // This saves massive fill rate on Mali/Adreno GPUs
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const renderScale = isTouch ? 0.5 : 1.0;
+    const composerW = Math.round(w * renderScale);
+    const composerH = Math.round(h * renderScale);
 
     this.composer = new EffectComposer(renderer);
-    this.composer.setSize(w, h);
+    this.composer.setSize(composerW, composerH);
 
     this.renderPass = new RenderPass(scene, camera);
     this.composer.addPass(this.renderPass);
@@ -138,10 +150,8 @@ export class PostProcessing {
     // Bloom is a multi-pass fullscreen kernel — desktop MEDIUM/HIGH only.
     // Touch devices cap out at the single grade pass (LOW) regardless of the
     // selected level: phones spend their fragment budget on resolution.
-    const isTouch =
-      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
     if ((level === 'MEDIUM' || level === 'HIGH') && !isTouch) {
-      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.55, 0.5, 1.12);
+      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(composerW, composerH), 0.55, 0.5, 1.12);
       this.composer.addPass(this.bloomPass);
     }
 
@@ -163,7 +173,12 @@ export class PostProcessing {
     // Re-sync with any adaptive pixel-ratio changes made on the renderer
     // (dynamic resolution scaling) before resizing the render targets.
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
-    this.composer.setSize(w, h);
+    
+    // Apply mobile 50% render scale
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const renderScale = isTouch ? 0.5 : 1.0;
+    this.composer.setSize(Math.round(w * renderScale), Math.round(h * renderScale));
   }
 
   /** Swap the rendered camera (e.g. Air Strike bird's-eye targeting view). */

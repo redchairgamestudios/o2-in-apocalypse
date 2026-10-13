@@ -4,6 +4,8 @@ import { ProceduralTextures } from '../textures/ProceduralTextures';
 import { MeltyZombieTexture, MELTY_UV } from '../textures/MeltyZombieTexture';
 import { GltfZombieFactory, GltfRig } from './GltfZombieFactory';
 import { ColossusModel } from './ColossusModel';
+import { createVatZombie, updateVatZombie, shouldUseVat, preloadVatAnimations } from './VatZombieFactory';
+import { GraphicsSettings } from '../core/GraphicsSettings';
 
 function speedMultDefault(_type: ZombieTypeKey): number {
   return 0.88 + Math.random() * 0.24;
@@ -38,6 +40,8 @@ export interface ZombieInstance {
   gltfRig?: (GltfRig & { weakpointMesh?: THREE.Mesh }) | null;
   // Static-sculpt boss rig (Blind Hunter colossus) — no skeleton, procedural sway
   staticRig?: { root: THREE.Group } | null;
+  // VAT (Vertex Animation Texture) for mobile LOW/MEDIUM presets
+  vatData?: any | null;
   isDead: boolean;
   isDecapitated: boolean;
   isDismemberedArm: boolean;
@@ -215,6 +219,77 @@ export class ZombieModelFactory {
         exhaustionTimer: 0,
         targetIsDrone: false,
       };
+    }
+
+    // Check if we should use VAT (Vertex Animation Texture) for mobile LOW/MEDIUM
+    const useVat = shouldUseVat() && type !== 'colossus' && !config.isBoss;
+    if (useVat) {
+      const vatResult = createVatZombie(type, id, config);
+      if (vatResult) {
+        const root = new THREE.Group();
+        root.name = `vat_zombie_${id}`;
+        root.add(vatResult.mesh);
+        // Add hitboxes to root
+        for (const hb of vatResult.hitboxMeshes) {
+          root.add(hb);
+        }
+        return {
+          id,
+          type,
+          config,
+          mesh: root,
+          headMesh: vatResult.mesh,
+          weakpointMesh: undefined,
+          hitboxMeshes: vatResult.hitboxMeshes,
+          hp: config.maxHp,
+          maxHp: config.maxHp,
+          state: isFromNarrowPath ? 'WANDER' : (Math.random() < 0.35 ? 'WANDER' : 'IDLE'),
+          stateTimer: 0,
+          attackTimer: 1.5,
+          staggerTimer: 0,
+          speed: config.speed,
+          targetPosition: new THREE.Vector3(),
+          animTime: Math.random() * 10,
+          leftArm: new THREE.Group(),
+          rightArm: new THREE.Group(),
+          leftLeg: new THREE.Group(),
+          rightLeg: new THREE.Group(),
+          torso: new THREE.Group(),
+          head: new THREE.Group(),
+          neck: new THREE.Group(),
+          jaw: new THREE.Group(),
+          gltfRig: null,
+          staticRig: null,
+          vatData: vatResult.vatData,
+          isDead: false,
+          isDecapitated: false,
+          isDismemberedArm: false,
+          deathTimer: 0,
+          groanTimer: Math.random() * 5 + 3,
+          detectionRadius: ZombieModelFactory.getDetectionRadius(type),
+          isAlerted: false,
+          alertReactionTimer: 0.4 + Math.random() * 1.2,
+          wanderTimer: Math.random() * 4 + 2,
+          wanderTarget: null,
+          spawnOrigin: spawnPos ? spawnPos.clone() : new THREE.Vector3(),
+          isFromNarrowPath,
+          narrowPathExit: narrowPathExit ? narrowPathExit.clone() : null,
+          hasExitedNarrowPath: false,
+          speedMultiplier: speedMultDefault(type),
+          slowTimer: 0,
+          slowMultiplier: 1.0,
+          strafeDir: Math.random() < 0.5 ? -1 : 1,
+          strafeTimer: Math.random() * 2 + 1,
+          isBoss: config.isBoss || type === 'colossus',
+          bossName: config.name,
+          isFrenzied: false,
+          frenzyTimer: 0,
+          frenzyDuration: 3.5,
+          frenzyCooldownTimer: 7.0 + Math.random() * 3.0,
+          exhaustionTimer: 0,
+          targetIsDrone: false,
+        };
+      }
     }
 
     // Prefer the realistic skinned GLTF zombie; fall back to the procedural
@@ -1052,6 +1127,12 @@ export class ZombieModelFactory {
   }
 
   public static updateZombieAnimation(zombie: ZombieInstance, delta: number, distanceToPlayer: number) {
+    // VAT (Vertex Animation Texture) for mobile LOW/MEDIUM
+    if (zombie.vatData) {
+      updateVatZombie(zombie, delta, distanceToPlayer);
+      return;
+    }
+
     // Static boss sculpt: procedural shamble sway, no skeleton
     if (zombie.staticRig) {
       this.updateStaticBossAnimation(zombie, delta);
@@ -1266,7 +1347,7 @@ export class ZombieModelFactory {
    * zombie already has a skinned/sculpted rig or the model isn't ready.
    */
   public static upgradeZombieToGltf(zombie: ZombieInstance): boolean {
-    if (zombie.gltfRig || zombie.staticRig || zombie.isDead) return false;
+    if (zombie.gltfRig || zombie.staticRig || zombie.vatData || zombie.isDead) return false;
     const built = GltfZombieFactory.createRig(zombie.id, zombie.config);
     if (!built) return false;
 
@@ -1280,11 +1361,18 @@ export class ZombieModelFactory {
     zombie.gltfRig = built.rig;
     zombie.headMesh = built.headMesh;
     zombie.weakpointMesh = built.rig.weakpointMesh;
+    zombie.vatData = null; // Clear VAT data
     return true;
   }
 
   /** Fatal headshot: remove the head from the rig (procedural hide / bone collapse). */
-  public static applyDecapitation(zombie: ZombieInstance) {    if (zombie.gltfRig) {
+  public static applyDecapitation(zombie: ZombieInstance) {
+    if (zombie.vatData) {
+      zombie.vatData.material.uniforms.uDecapitated.value = 1;
+      zombie.isDecapitated = true;
+      return;
+    }
+    if (zombie.gltfRig) {
       if (zombie.gltfRig.headBone) {
         zombie.gltfRig.headBone.scale.setScalar(0.001);
       }
@@ -1308,6 +1396,14 @@ export class ZombieModelFactory {
     zombie: ZombieInstance,
     limb: 'ARM_L' | 'ARM_R' | 'LEG_L' | 'LEG_R'
   ): boolean {
+    if (zombie.vatData) {
+      const limbs = zombie.vatData.material.uniforms.uSeveredLimbs.value;
+      if (limb === 'ARM_L') limbs.x = 1;
+      else if (limb === 'ARM_R') limbs.y = 1;
+      else if (limb === 'LEG_L') limbs.z = 1;
+      else if (limb === 'LEG_R') limbs.w = 1;
+      return true;
+    }
     if (zombie.gltfRig) {
       return GltfZombieFactory.collapseLimb(zombie.gltfRig, limb);
     }

@@ -3,6 +3,7 @@ import { PickupItem } from '../types';
 import { ProceduralTextures } from '../textures/ProceduralTextures';
 import { soundFx } from '../audio/SoundEffects';
 import { GraphicsSettings, getParticleScale } from '../core/GraphicsSettings';
+import { InstancedEffectsManager } from './InstancedEffectsManager';
 
 interface Particle {
   mesh: THREE.Mesh;
@@ -61,6 +62,11 @@ export class ParticleSystem {
     this.envMeshes = group ? [group] : [];
   }
 
+  /** Update effects scale when graphics settings change (live, no restart). */
+  public static updateFxScale(newFxScale: number) {
+    this.fxScale = newFxScale;
+  }
+
   /**
    * First hit that lands on a SOLID, opaque, visible surface. Transparent
    * props (the objective light beam, chain-link fences, the extraction ring)
@@ -77,6 +83,36 @@ export class ParticleSystem {
       return h;
     }
     return null;
+  }
+
+  /** Re-initialize pools when effects quality changes (called from graphics settings). */
+  public static reinitPools(): void {
+    if (!this.scene) return;
+    
+    // Clear existing pools
+    for (const p of this.particles) {
+      p.mesh.geometry.dispose();
+      if (p.mesh.material instanceof THREE.Material) {
+        p.mesh.material.dispose();
+      } else if (Array.isArray(p.mesh.material)) {
+        p.mesh.material.forEach(m => m.dispose());
+      }
+      this.scene.remove(p.mesh);
+    }
+    for (const d of this.decals) {
+      d.mesh.geometry.dispose();
+      if (d.mesh.material instanceof THREE.Material) {
+        d.mesh.material.dispose();
+      } else if (Array.isArray(d.mesh.material)) {
+        d.mesh.material.forEach(m => m.dispose());
+      }
+      this.scene.remove(d.mesh);
+    }
+    this.particles.length = 0;
+    this.decals.length = 0;
+    
+    // Re-run init logic
+    this.init(this.scene);
   }
 
   private static bloodMat: THREE.MeshBasicMaterial | null = null;
@@ -108,17 +144,51 @@ export class ParticleSystem {
       'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
     const effects = GraphicsSettings.get().effectsQuality;
     this.fxScale = getParticleScale(effects);
-    const lowTier = isTouch && effects === 'LOW';
-    const PARTICLE_POOL = Math.round((lowTier ? 100 : isTouch ? 140 : 300) * this.fxScale);
+    
+    // DRAMATICALLY reduced pools for mobile LOW (targeting 30 FPS on Realme 7)
+    // LOW touch: 50 particles, 20 decals
+    // MEDIUM touch: 80 particles, 35 decals  
+    // HIGH/ULTRA touch: 120 particles, 50 decals
+    // Desktop: 300 particles, 140 decals (unchanged)
+    let PARTICLE_POOL: number;
+    let DECAL_POOL: number;
+    
+    if (isTouch) {
+      switch (effects) {
+        case 'LOW':
+          PARTICLE_POOL = 50;
+          DECAL_POOL = 20;
+          break;
+        case 'MEDIUM':
+          PARTICLE_POOL = 80;
+          DECAL_POOL = 35;
+          break;
+        case 'HIGH':
+          PARTICLE_POOL = 120;
+          DECAL_POOL = 50;
+          break;
+        case 'ULTRA':
+          PARTICLE_POOL = 150;
+          DECAL_POOL = 70;
+          break;
+        default:
+          PARTICLE_POOL = 80;
+          DECAL_POOL = 35;
+      }
+    } else {
+      PARTICLE_POOL = Math.round(300 * this.fxScale);
+      DECAL_POOL = Math.round(140 * this.fxScale);
+    }
+    
     // Gib index regions derive from the pool size (flesh gibs occupy the last
     // ~30%, bone shards the back half of that region) so scaled pools stay
     // consistent with getFreeParticle's gib scan.
     const GIB_START = Math.round(PARTICLE_POOL * 0.7);
     const GIB_END = GIB_START + Math.round((PARTICLE_POOL - GIB_START) * 0.5);
     this.gibStartIndex = GIB_START;
-    const DECAL_POOL = Math.round((lowTier ? 44 : isTouch ? 60 : 140) * this.fxScale);
-    const WALL_DECAL_START = Math.round((lowTier ? 30 : isTouch ? 40 : 90) * this.fxScale);
-    const WALL_DECAL_END = Math.round((lowTier ? 38 : isTouch ? 52 : 120) * this.fxScale);
+    
+    const WALL_DECAL_START = Math.round(DECAL_POOL * 0.6);
+    const WALL_DECAL_END = Math.min(DECAL_POOL, Math.round(DECAL_POOL * 0.8));
 
     this.bloodMat = new THREE.MeshBasicMaterial({ color: 0x990000 });
     this.darkBloodMat = new THREE.MeshStandardMaterial({
@@ -383,31 +453,8 @@ export class ParticleSystem {
   public static spawnGoreGibs(pos: THREE.Vector3, dir: THREE.Vector3, count: number = 6) {
     soundFx.playDismemberment();
 
-    for (let i = 0; i < Math.round(count * this.fxScale); i++) {
-      const p = this.getFreeParticle(true);
-      if (!p) break;
-
-      p.mesh.position.copy(pos);
-      p.mesh.scale.setScalar(Math.random() * 0.8 + 0.6);
-      p.mesh.visible = true;
-      p.active = true;
-      p.life = 0;
-      p.maxLife = 2.8 + Math.random() * 1.5;
-      p.gravity = 16.0;
-      p.scaleDelta = 0;
-
-      const spread = 5.0;
-      p.velocity.set(
-        dir.x * 2.2 + (Math.random() - 0.5) * spread,
-        Math.random() * 4.8 + 2.2,
-        dir.z * 2.2 + (Math.random() - 0.5) * spread
-      );
-      p.rotVelocity.set(
-        (Math.random() - 0.5) * 16,
-        (Math.random() - 0.5) * 16,
-        (Math.random() - 0.5) * 16
-      );
-    }
+    // Use InstancedMesh for gibs - much more performant on mobile
+    InstancedEffectsManager.spawnDebris(pos, Math.round(count * this.fxScale), true); // true = flesh gibs
   }
 
   // Expanding Ground Blood Pool Decal
@@ -562,58 +609,24 @@ export class ParticleSystem {
 
   // Metal sparks / wall impact
   public static spawnSparks(pos: THREE.Vector3, normal?: THREE.Vector3) {
+    // Use InstancedMesh for better performance
     const norm = normal || new THREE.Vector3(0, 1, 0);
-    for (let i = 0; i < Math.round(6 * this.fxScale); i++) {
-      const p = this.getFreeParticle();
-      if (!p) break;
-
-      p.mesh.material = this.sparkMat!;
-      p.mesh.position.copy(pos);
-      p.mesh.scale.setScalar(0.4);
-      p.mesh.visible = true;
-      p.active = true;
-      p.life = 0;
-      p.maxLife = 0.25;
-      p.gravity = 8.0;
-      p.scaleDelta = -0.3;
-
-      p.velocity.set(
-        norm.x * 3 + (Math.random() - 0.5) * 3,
-        norm.y * 3 + Math.random() * 3,
-        norm.z * 3 + (Math.random() - 0.5) * 3
-      );
-      p.rotVelocity.set(0, 0, 0);
-    }
+    const count = Math.round(6 * this.fxScale);
+    InstancedEffectsManager.spawnSparks(pos, norm, count);
   }
 
   // Ejected brass casing
   public static spawnShellCasing(pos: THREE.Vector3, camRight: THREE.Vector3) {
-    const p = this.getFreeParticle();
-    if (!p) return;
-
-    p.mesh.material = this.brassMat!;
-    p.mesh.position.copy(pos);
-    p.mesh.scale.set(0.02, 0.08, 0.02);
-    p.mesh.visible = true;
-    p.active = true;
-    p.life = 0;
-    p.maxLife = 0.6;
-    p.gravity = 12.0;
-    p.scaleDelta = 0;
-
-    p.velocity.set(
-      camRight.x * 3.5 + (Math.random() - 0.5) * 0.5,
-      2.5 + Math.random() * 0.8,
-      camRight.z * 3.5 + (Math.random() - 0.5) * 0.5
-    );
-    p.rotVelocity.set(Math.random() * 20, Math.random() * 20, 0);
+    // Use InstancedMesh for better performance
+    InstancedEffectsManager.spawnCasing(pos, camRight);
   }
 
   // Explosive barrel explosion burst. `groundMark = false` skips the scorch
   // decal — used for the RPG's muzzle backblast so firing never stamps the
   // ground at the player's own feet.
   public static spawnExplosion(pos: THREE.Vector3, groundMark: boolean = true) {
-    for (let i = 0; i < Math.round(35 * this.fxScale); i++) {
+    // Fire/smoke particles (keep for visual explosion effect)
+    for (let i = 0; i < Math.round(20 * this.fxScale); i++) {
       const p = this.getFreeParticle();
       if (!p) break;
 
@@ -636,6 +649,10 @@ export class ParticleSystem {
       );
       p.rotVelocity.set(0, 0, 0);
     }
+
+    // Debris/gibs via InstancedMesh (replaces old particle-based debris)
+    const debrisCount = Math.round(12 * this.fxScale);
+    InstancedEffectsManager.spawnDebris(pos, debrisCount, false); // false = not flesh (concrete/metal debris)
 
     // Explosion ground scorch decal (charred blast residue, NOT blood)
     if (groundMark) {

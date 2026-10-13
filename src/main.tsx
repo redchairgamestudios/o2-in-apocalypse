@@ -4,6 +4,17 @@ import App from './App.tsx';
 import './index.css';
 import { registerSW } from 'virtual:pwa-register';
 
+// Global error handler to catch render errors
+window.addEventListener('error', (event) => {
+  console.error('Global error:', event.error || event.message);
+  document.getElementById('root')!.innerHTML = `<pre style="color: red; padding: 20px;">${event.error?.stack || event.message}</pre>`;
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled rejection:', event.reason);
+  document.getElementById('root')!.innerHTML = `<pre style="color: red; padding: 20px;">${event.reason?.stack || event.reason}</pre>`;
+});
+
 // Build marker: lets the page assert which bundle the SW is actually serving
 // (autoUpdate serves the previous precache on the first reload after a build)
 (globalThis as Record<string, unknown>).__DZ_BUILD = 'wallblood-solid-v2';
@@ -24,8 +35,13 @@ registerSW({
   },
 });
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+try {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+} catch (e) {
+  console.error('Root render error:', e);
+  document.getElementById('root')!.innerHTML = `<pre style="color: red; padding: 20px;">${e instanceof Error ? e.stack : String(e)}</pre>`;
+}

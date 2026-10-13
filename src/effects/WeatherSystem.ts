@@ -157,7 +157,35 @@ export class WeatherSystem {
     // with the effects quality preset so weak phones keep the loop cheap.
     const isTouch =
       'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
-    const weatherScale = (isTouch ? 0.5 : 1.0) * getParticleScale(GraphicsSettings.get().effectsQuality);
+    const effects = GraphicsSettings.get().effectsQuality;
+    
+    // DRAMATICALLY reduced counts for mobile LOW
+    // LOW: 300 rain, 50 embers, 20 splashes
+    // MEDIUM: 600 rain, 100 embers, 40 splashes
+    // HIGH: 1200 rain, 200 embers, 80 splashes
+    // Desktop: full counts
+    let weatherScale: number;
+    if (isTouch) {
+      switch (effects) {
+        case 'LOW':
+          weatherScale = 0.17; // ~300 rain particles
+          break;
+        case 'MEDIUM':
+          weatherScale = 0.33; // ~600 rain particles
+          break;
+        case 'HIGH':
+          weatherScale = 0.67; // ~1200 rain particles
+          break;
+        case 'ULTRA':
+          weatherScale = 1.0;
+          break;
+        default:
+          weatherScale = 0.33;
+      }
+    } else {
+      weatherScale = 1.0;
+    }
+    
     if (weatherScale < 1) {
       this.rainCount = Math.round(this.rainCount * weatherScale);
       this.emberCount = Math.round(this.emberCount * weatherScale);
@@ -582,5 +610,57 @@ export class WeatherSystem {
     if (this.lightningLight) {
       this.lightningLight.intensity = 0;
     }
+  }
+
+  /** Reinitialize weather particle counts when graphics quality changes. */
+  public static reinitParticleCounts(): void {
+    if (!this.scene) return;
+    
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const effects = GraphicsSettings.get().effectsQuality;
+    
+    let weatherScale: number;
+    if (isTouch) {
+      switch (effects) {
+        case 'LOW':
+          weatherScale = 0.17;
+          break;
+        case 'MEDIUM':
+          weatherScale = 0.33;
+          break;
+        case 'HIGH':
+          weatherScale = 0.67;
+          break;
+        case 'ULTRA':
+          weatherScale = 1.0;
+          break;
+        default:
+          weatherScale = 0.33;
+      }
+    } else {
+      weatherScale = 1.0;
+    }
+    
+    // Dispose old geometries
+    if (this.rainGeometry) this.rainGeometry.dispose();
+    if (this.emberGeometry) this.emberGeometry.dispose();
+    if (this.splashGeometry) this.splashGeometry.dispose();
+    if (this.rainMaterial) this.rainMaterial.dispose();
+    if (this.emberMaterial) this.emberMaterial.dispose();
+    if (this.splashMaterial) this.splashMaterial.dispose();
+    if (this.rainPoints) { this.scene.remove(this.rainPoints); this.rainPoints = null; }
+    if (this.emberPoints) { this.scene.remove(this.emberPoints); this.emberPoints = null; }
+    if (this.splashPoints) { this.scene.remove(this.splashPoints); this.splashPoints = null; }
+    
+    // Reset base counts
+    this.rainCount = Math.round(1800 * weatherScale);
+    this.emberCount = Math.round(280 * weatherScale);
+    this.splashCount = Math.round(120 * weatherScale);
+    
+    // Recreate
+    this.initRain();
+    this.initEmbers();
+    this.initSplashes();
   }
 }
