@@ -54,6 +54,14 @@ export class GunEffects {
     // Debug/testing hook (used by automated visual checks)
     (globalThis as Record<string, unknown>).__dzGunFX = GunEffects;
 
+    // Mobile perf: every PointLight in the scene multiplies the fragment
+    // shader cost of ALL materials (forward rendering). Touch devices get a
+    // single muzzle light and sprite-only impacts.
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const muzzleLightCount = isTouch ? 1 : 4;
+    const impactLightCount = isTouch ? 0 : 3;
+
     const warmFlash = createGlowTexture('rgba(255,252,230,1)', 'rgba(255,170,60,0.85)');
     const coolFlash = createGlowTexture('rgba(235,245,255,1)', 'rgba(120,170,255,0.7)');
     this.flashTextures = [warmFlash, coolFlash];
@@ -67,8 +75,8 @@ export class GunEffects {
       opacity: 1,
     });
 
-    // 4 pooled muzzle flashes (sprite + light)
-    for (let i = 0; i < 4; i++) {
+    // Pooled muzzle flashes (sprite + light)
+    for (let i = 0; i < muzzleLightCount; i++) {
       const sprite = new THREE.Sprite(this.muzzleFlashMat.clone());
       sprite.visible = false;
       sprite.renderOrder = 999;
@@ -81,8 +89,9 @@ export class GunEffects {
       this.flashes.push({ sprite, light, life: 0, maxLife: 0.06, baseScale: 0.4, active: false });
     }
 
-    // 28 pooled tracers: thin stretched additive beams along Z
-    const tracerGeo = new THREE.CylinderGeometry(0.014, 0.003, 1, 5, 1, true);
+    // Pooled tracers: thin stretched additive beams along Z
+    const tracerCount = isTouch ? 10 : 28;
+    const tracerGeo = new THREE.CylinderGeometry(0.014, 0.003, 1, isTouch ? 4 : 5, 1, true);
     tracerGeo.rotateX(Math.PI / 2); // axis -> +Z so lookAt() aims it
     tracerGeo.translate(0, 0, -0.5); // origin at muzzle end
     const tracerMat = new THREE.MeshBasicMaterial({
@@ -93,7 +102,7 @@ export class GunEffects {
       depthWrite: false,
     });
 
-    for (let i = 0; i < 28; i++) {
+    for (let i = 0; i < tracerCount; i++) {
       const mesh = new THREE.Mesh(tracerGeo, tracerMat);
       mesh.visible = false;
       mesh.frustumCulled = false;
@@ -101,8 +110,9 @@ export class GunEffects {
       this.tracers.push({ mesh, life: 0, maxLife: 0.09, active: false });
     }
 
-    // 3 pooled impact lights for bullet hits on world geometry
-    for (let i = 0; i < 3; i++) {
+    // Pooled impact lights for bullet hits on world geometry (desktop only —
+    // mobile relies on the additive impact sprite for the visual pop)
+    for (let i = 0; i < impactLightCount; i++) {
       const light = new THREE.PointLight(0xffd9a0, 0, 10, 2.0);
       light.visible = false;
       scene.add(light);

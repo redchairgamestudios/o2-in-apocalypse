@@ -156,12 +156,10 @@ export class PlayerController {
     this.flashlightFlood = new THREE.SpotLight(0xfff3d6, 0, 40, Math.PI / 3.2, 0.9, 1.5);
     this.flashlightFlood.position.set(0.16, -0.24, -1.4);
     this.flashlightFlood.target = this.flashlightTarget;
-    this.camera.add(this.flashlightFlood);
 
     // Ambient forward fill point light to illuminate ground, curbs, and nearby obstacles
     this.flashlightFill = new THREE.PointLight(0xffecd1, 0, 10, 1.6);
     this.flashlightFill.position.set(0, -0.35, -2.4);
-    this.camera.add(this.flashlightFill);
 
     this.weaponContainer = new THREE.Group();
     this.camera.add(this.weaponContainer);
@@ -170,7 +168,16 @@ export class PlayerController {
     this.muzzleLight = new THREE.PointLight(0xffc873, 0, 16, 2.0);
     this.muzzleLight.position.set(0.22, -0.14, -0.9);
     this.muzzleLight.layers.enable(1); // the gun's own flash DOES light the gun
-    this.camera.add(this.muzzleLight);
+
+    // Mobile perf: forward rendering charges every scene light against ALL
+    // fragment shaders. The flood/fill/muzzle lights never enter the scene
+    // graph on touch devices — intensity writes become harmless no-ops and
+    // the single muzzle light pooled in GunEffects carries the flash look.
+    if (!isTouch) {
+      this.camera.add(this.flashlightFlood);
+      this.camera.add(this.flashlightFill);
+      this.camera.add(this.muzzleLight);
+    }
 
     this.setWeapon('pistol', { damageLevel: 0, magLevel: 0, fireRateLevel: 0, reloadLevel: 0 });
   }

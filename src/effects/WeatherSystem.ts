@@ -168,19 +168,19 @@ export class WeatherSystem {
     if (isTouch) {
       switch (effects) {
         case 'LOW':
-          weatherScale = 0.17; // ~300 rain particles
+          weatherScale = 0.05; // ~90 rain particles (was 0.17)
           break;
         case 'MEDIUM':
-          weatherScale = 0.33; // ~600 rain particles
+          weatherScale = 0.1;  // ~180 rain particles (was 0.33)
           break;
         case 'HIGH':
-          weatherScale = 0.67; // ~1200 rain particles
+          weatherScale = 0.2;  // ~360 rain particles (was 0.67)
           break;
         case 'ULTRA':
-          weatherScale = 1.0;
+          weatherScale = 0.33; // ~600 rain particles (was 1.0)
           break;
         default:
-          weatherScale = 0.33;
+          weatherScale = 0.1;
       }
     } else {
       weatherScale = 1.0;
@@ -624,19 +624,19 @@ export class WeatherSystem {
     if (isTouch) {
       switch (effects) {
         case 'LOW':
-          weatherScale = 0.17;
+          weatherScale = 0.05;
           break;
         case 'MEDIUM':
-          weatherScale = 0.33;
+          weatherScale = 0.1;
           break;
         case 'HIGH':
-          weatherScale = 0.67;
+          weatherScale = 0.2;
           break;
         case 'ULTRA':
-          weatherScale = 1.0;
+          weatherScale = 0.33;
           break;
         default:
-          weatherScale = 0.33;
+          weatherScale = 0.1;
       }
     } else {
       weatherScale = 1.0;

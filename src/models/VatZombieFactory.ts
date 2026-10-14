@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { ZombieConfig, ZombieTypeKey } from '../types';
 import { ZombieInstance } from './ZombieModel';
 import { GltfZombieFactory } from './GltfZombieFactory';
+import { GraphicsSettings } from '../core/GraphicsSettings';
 
 /**
  * Vertex Animation Texture (VAT) system for baked skinned animations.
@@ -48,19 +49,21 @@ const VAT_BAKE_FPS = 30;      // Frames per second to sample
 const VAT_MAX_FRAMES = 120;   // Max frames per clip (4 seconds at 30fps)
 
 /**
- * Check if VAT should be used based on graphics settings
+ * Check if VAT should be used based on graphics settings and device
  */
 export function shouldUseVat(): boolean {
-  const config = GltfZombieFactory['ready'] ? 
-    (() => {
-      try {
-        const { GraphicsSettings } = require('../core/GraphicsSettings');
-        const cfg = GraphicsSettings.get();
-        return cfg.effectsQuality === 'LOW' || cfg.effectsQuality === 'MEDIUM';
-      } catch {
-        return true; // Default to VAT on error (safer for mobile)
-      }
-    })() : true;
+  const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+
+  // Always use VAT on mobile devices - runtime skinning is too expensive
+  if (isMobile) return true;
+
+  // On desktop, use VAT for LOW/MEDIUM presets (skinned rigs on HIGH/ULTRA)
+  try {
+    const cfg = GraphicsSettings.get();
+    return cfg.effectsQuality === 'LOW' || cfg.effectsQuality === 'MEDIUM';
+  } catch {
+    return true;
+  }
 }
 
 /**

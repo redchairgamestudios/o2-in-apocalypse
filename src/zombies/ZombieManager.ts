@@ -42,6 +42,10 @@ export class ZombieManager {
   // Rolling frame counter for far-zombie LOD staggering
   private frame: number = 0;
 
+  // Distance beyond which non-boss zombies are hidden entirely (fog hides them).
+  // Tighter on touch devices where vertex/fill cost dominates.
+  private farCullDistance: number;
+
   // Zombies currently using the procedural fallback while the custom GLTF
   // model is still streaming — upgraded in place once the model arrives
   private fallbackAlive = 0;
@@ -71,6 +75,7 @@ export class ZombieManager {
     const limits = getZombieLimits(GraphicsSettings.get().effectsQuality, isTouch);
     this.MAX_ALIVE = limits.maxAlive;
     this.MAX_CORPSES = limits.maxCorpses;
+    this.farCullDistance = isTouch ? 55 : 85;
   }
 
   /** Live cap change from the graphics settings UI (no scene remount). */
@@ -552,16 +557,19 @@ export class ZombieManager {
 
       // FAR-VISIBILITY CULL: frustumCulled is disabled on skinned meshes
       // (bind-pose bounds are wrong), so distant zombies behind/above the
-      // camera would keep rendering. Beyond 85m they sit inside the fog haze
-      // anyway — hide the whole rig and skip all per-frame cosmetics.
-      const farCull = !z.isBoss && distToPlayer > 85;
+      // camera would keep rendering. Mobile uses a tighter radius — fill rate
+      // and vertex cost dominate there. Beyond the radius they sit inside the
+      // fog haze anyway — hide the whole rig and skip all per-frame cosmetics.
+      const farCullDist = this.farCullDistance;
+      const farCull = !z.isBoss && distToPlayer > farCullDist;
       if (z.mesh.visible === farCull) z.mesh.visible = !farCull;
       if (farCull) continue;
 
-      // FAR-AI LOD: beyond 70m (but still visible up to 85m), skip full AI/state
-      // updates every other frame. These zombies are too far to meaningfully
-      // interact with the player. Bosses and colossi never skip AI.
-      if (distToPlayer > 70 && !z.isBoss && z.type !== 'colossus' && (this.frame + i) % 2 !== 0) {
+      // FAR-AI LOD: beyond 70% of the cull radius (but still visible), skip
+      // full AI/state updates every other frame. These zombies are too far to
+      // meaningfully interact with the player. Bosses/colossi never skip AI.
+      const farLodDist = farCullDist * 0.8;
+      if (distToPlayer > farLodDist && !z.isBoss && z.type !== 'colossus' && (this.frame + i) % 2 !== 0) {
         // Still apply position bounds so they don't drift off-map
         z.mesh.position.x = Math.max(-115, Math.min(115, z.mesh.position.x));
         z.mesh.position.z = Math.max(-145, Math.min(155, z.mesh.position.z));

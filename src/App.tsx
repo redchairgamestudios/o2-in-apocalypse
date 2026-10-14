@@ -410,7 +410,12 @@ export default function App() {
     });
     GunEffects.init(scene);
     const initialConfig = GraphicsSettings.get();
-    PostProcessing.init(renderer, scene, player.camera, initialConfig.postProcessing);
+    // Mobile: force direct render — the composer path costs fullscreen fill
+    // rate that phones need for the actual scene.
+    PostProcessing.init(
+      renderer, scene, player.camera,
+      isTouchDevice ? 'OFF' : initialConfig.postProcessing
+    );
 
     // Stream the realistic skinned zombie roster, boss sculpt, heavy weapon, helicopter & squad character
     GltfZombieFactory.preload();
@@ -575,7 +580,8 @@ export default function App() {
       }
       
       // Update post-processing quality
-      const fxLevel = (() => {
+      // Force OFF on mobile for maximum performance (25% render target already saves fill rate)
+      const fxLevel = isTouchDevice ? 'OFF' : (() => {
         switch (config.postProcessing) {
           case 'OFF': return 'OFF';
           case 'LOW': return 'LOW';

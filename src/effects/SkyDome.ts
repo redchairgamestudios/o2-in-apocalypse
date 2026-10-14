@@ -63,9 +63,11 @@ export class SkyDome {
   public static init(scene: THREE.Scene) {
     if (this.mesh) return;
 
-    // REDUCED geometry on LOW preset (fewer vertices = less vertex shader work)
+    // REDUCED geometry on LOW preset or any touch device (fewer vertices = less vertex shader work)
     const effects = GraphicsSettings.get().effectsQuality;
-    const isLow = effects === 'LOW';
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const isLow = effects === 'LOW' || isTouch;
     const geo = new THREE.SphereGeometry(210, isLow ? 16 : 32, isLow ? 10 : 20);
     
     this.material = new THREE.ShaderMaterial({
@@ -162,7 +164,9 @@ export class SkyDome {
     if (!this.mesh) return;
     
     const effects = GraphicsSettings.get().effectsQuality;
-    const isLow = effects === 'LOW';
+    const isTouch =
+      'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const isLow = effects === 'LOW' || isTouch;
     
     // Dispose old
     this.mesh.geometry.dispose();
