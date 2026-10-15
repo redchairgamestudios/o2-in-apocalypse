@@ -54,16 +54,12 @@ const VAT_MAX_FRAMES = 120;   // Max frames per clip (4 seconds at 30fps)
 export function shouldUseVat(): boolean {
   const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
 
-  // Always use VAT on mobile devices - runtime skinning is too expensive
-  if (isMobile) return true;
+  // VAT system is not fully implemented (vertex shader missing vertex ID attribute for texture sampling)
+  // Disable on mobile to use procedural/GLTF zombies that render correctly
+  if (isMobile) return false;
 
-  // On desktop, use VAT for LOW/MEDIUM presets (skinned rigs on HIGH/ULTRA)
-  try {
-    const cfg = GraphicsSettings.get();
-    return cfg.effectsQuality === 'LOW' || cfg.effectsQuality === 'MEDIUM';
-  } catch {
-    return true;
-  }
+  // On desktop, VAT is also disabled until vertex ID attribute is implemented
+  return false;
 }
 
 /**
