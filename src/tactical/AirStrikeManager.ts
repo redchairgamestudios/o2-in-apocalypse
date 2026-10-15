@@ -166,25 +166,32 @@ export class AirStrikeManager {
   private static createStrikeVisual(position: THREE.Vector3): void {
     if (!this.scene || !this.strikeEffect) return;
 
+    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const fxScale = isTouch ? 1.5 : 1.0; // Larger on mobile for visibility
+
     // Warning marker on ground (appears before strike)
     const markerGeometry = new THREE.RingGeometry(this.STRIKE_RADIUS - 0.5, this.STRIKE_RADIUS + 0.5, 32);
     const markerMaterial = new THREE.MeshBasicMaterial({
-      color: 0xff2200,
+      color: 0xff3300,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
     });
     const marker = new THREE.Mesh(markerGeometry, markerMaterial);
     marker.rotation.x = -Math.PI / 2;
     marker.position.set(position.x, 0.1, position.z);
     this.strikeEffect.add(marker);
 
-    // Incoming missile trail (from sky)
-    const trailGeometry = new THREE.CylinderGeometry(0.15, 0.3, this.TARGETING_HEIGHT, 8);
+    // Incoming missile trail (from sky) - MUCH THICKER AND BRIGHTER
+    const trailRadius = 0.6 * fxScale;
+    const trailGeometry = new THREE.CylinderGeometry(trailRadius * 0.5, trailRadius * 1.5, this.TARGETING_HEIGHT, 12);
     const trailMaterial = new THREE.MeshBasicMaterial({
-      color: 0xff4400,
+      color: 0xff6600,
       transparent: true,
-      opacity: 0.6,
+      opacity: 0.8,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
     });
     const trail = new THREE.Mesh(trailGeometry, trailMaterial);
     trail.position.set(position.x, this.TARGETING_HEIGHT / 2, position.z);
@@ -194,8 +201,8 @@ export class AirStrikeManager {
     let pulsePhase = 0;
     const pulseInterval = setInterval(() => {
       pulsePhase += 0.3;
-      markerMaterial.opacity = 0.4 + 0.4 * Math.sin(pulsePhase * 4);
-      marker.scale.setScalar(1 + 0.1 * Math.sin(pulsePhase * 4));
+      markerMaterial.opacity = 0.5 + 0.4 * Math.sin(pulsePhase * 4);
+      marker.scale.setScalar(1 + 0.15 * Math.sin(pulsePhase * 4));
     }, 50);
 
     // Impact after 1.5s delay
@@ -209,6 +216,10 @@ export class AirStrikeManager {
 
   private static createExplosion(position: THREE.Vector3): void {
     if (!this.scene || !this.strikeEffect) return;
+
+    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    const effectsQuality = (() => { try { const { GraphicsSettings } = require('../core/GraphicsSettings'); return GraphicsSettings.get().effectsQuality; } catch { return 'LOW'; } })();
+    const fxScale = isTouch ? 0.5 : 1.0; // Base scale for mobile
 
     // Ground scorch mark
     const scorchGeometry = new THREE.CircleGeometry(this.STRIKE_RADIUS, 64);
@@ -236,30 +247,34 @@ export class AirStrikeManager {
     ring.position.set(position.x, 0.2, position.z);
     this.strikeEffect.add(ring);
 
-    // Fire particles
-    const particleCount = 40;
-    const particleGeometry = new THREE.SphereGeometry(0.3, 6, 6);
+    // FIRE PARTICLES - MUCH LARGER AND MORE VISIBLE
+    const baseParticleCount = 80;
+    const particleCount = Math.round(baseParticleCount * fxScale * (effectsQuality === 'LOW' ? 0.5 : effectsQuality === 'MEDIUM' ? 0.75 : 1.0));
+    const particleSize = isTouch ? 0.8 : 0.6; // Much larger on mobile
+    const particleGeometry = new THREE.SphereGeometry(particleSize, 8, 8);
     const particleMaterial = new THREE.MeshBasicMaterial({
-      color: 0xff6600,
+      color: 0xff8800,
       transparent: true,
       opacity: 1,
+      blending: THREE.AdditiveBlending, // Much more visible!
+      depthWrite: false,
     });
 
     for (let i = 0; i < particleCount; i++) {
       const particle = new THREE.Mesh(particleGeometry, particleMaterial.clone());
       const angle = (i / particleCount) * Math.PI * 2;
-      const radius = Math.random() * this.STRIKE_RADIUS * 0.8;
+      const radius = Math.random() * this.STRIKE_RADIUS * 0.9;
       particle.position.set(
         position.x + Math.cos(angle) * radius,
-        0.5 + Math.random() * 3,
+        1.0 + Math.random() * 4, // Start higher up
         position.z + Math.sin(angle) * radius
       );
       this.strikeEffect.add(particle);
 
-      // Animate particle
-      const targetY = 8 + Math.random() * 5;
+      // Animate particle - rise up and expand
+      const targetY = 12 + Math.random() * 8; // Rise higher
       const startY = particle.position.y;
-      const duration = 0.8 + Math.random() * 0.5;
+      const duration = 1.2 + Math.random() * 0.8;
       const startTime = performance.now();
 
       const animateParticle = () => {
@@ -267,7 +282,9 @@ export class AirStrikeManager {
         const progress = Math.min(elapsed / duration, 1);
         const eased = 1 - Math.pow(1 - progress, 3);
         particle.position.y = startY + (targetY - startY) * eased;
-        particle.scale.setScalar(1 - progress * 0.8);
+        // Expand as they rise
+        const scale = 1 + progress * 2;
+        particle.scale.setScalar(scale);
         particle.material.opacity = 1 - progress;
 
         if (progress < 1) {
@@ -281,12 +298,12 @@ export class AirStrikeManager {
 
     // Animate shockwave
     let shockTime = 0;
-    const shockDuration = 0.6;
+    const shockDuration = 0.8;
     const animateShockwave = () => {
       shockTime += 1/60;
       const progress = shockTime / shockDuration;
       if (progress <= 1) {
-        ring.scale.setScalar(1 + progress * this.STRIKE_RADIUS);
+        ring.scale.setScalar(1 + progress * this.STRIKE_RADIUS * 1.2);
         ringMaterial.opacity = 0.9 * (1 - progress);
         requestAnimationFrame(animateShockwave);
       } else {
