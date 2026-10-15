@@ -106,6 +106,9 @@ export default function App() {
   const [saveData, setSaveData] = useState<PlayerSaveData>(SaveManager.load());
   const [showBuyCoinsModal, setShowBuyCoinsModal] = useState<boolean>(false);
 
+  // Ref for onInteract callback so it can be called from keyboard handler
+  const onInteractRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     screenRef.current = screen;
   }, [screen]);
@@ -1188,16 +1191,14 @@ export default function App() {
           setIsFlashlightOn(state);
         }
       }
-      if (e.code === 'KeyE') {
+if (e.code === 'KeyE') {
         if (DroneManager.isDeployed) {
           inputRef.current.ascend = true;
         } else {
           inputRef.current.interact = true;
-          // Check objective interaction (generator consoles etc.)
-          if (playerRef.current && missionManagerRef.current) {
-            missionManagerRef.current.tryInteractObjective(playerRef.current.position);
-            // Rescue proximity check for survivor objectives
-            missionManagerRef.current.interactRequested = true;
+          // Call the HUD's onInteract handler which handles turret undeploy + mission objectives
+          if (onInteractRef.current) {
+            onInteractRef.current();
           }
         }
       }
@@ -1841,6 +1842,7 @@ export default function App() {
               }
             }
           }}
+          onInteractRef={onInteractRef}
           onSprintToggle={() => setIsSprinting((prev) => !prev)}
           isSprinting={isSprinting}
           hitFeedback={hitFeedback}

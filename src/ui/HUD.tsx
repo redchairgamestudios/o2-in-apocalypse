@@ -45,6 +45,7 @@ interface HUDProps {
   onReload: () => void;
   onJump?: () => void;
   onInteract: () => void;
+  onInteractRef?: React.RefObject<() => void>;
   onSprintToggle: () => void;
   isSprinting: boolean;
   hitFeedback: { hit: boolean; isHeadshot: boolean; timestamp: number };
@@ -128,6 +129,7 @@ export const HUD: React.FC<HUDProps> = ({
   onReload,
   onJump,
   onInteract,
+  onInteractRef,
   onSprintToggle,
   isSprinting,
   hitFeedback,
@@ -196,13 +198,18 @@ export const HUD: React.FC<HUDProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Set the onInteractRef so the keyboard handler can call the HUD's onInteract
+  useEffect(() => {
+    onInteractRef.current = onInteract;
+  }, [onInteract]);
+
   // High performance HUD update ticker
   useEffect(() => {
     let animId: number;
     let lastTick = 0;
     const loop = (now: number) => {
       animId = requestAnimationFrame(loop);
-      
+
       // Track FPS
       frameTimesRef.current.push(now);
       if (frameTimesRef.current.length > 60) frameTimesRef.current.shift();
