@@ -998,13 +998,13 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
       </div>
 
-      {/* DYNAMIC KILL FEED */}
+      {/* DYNAMIC KILL FEED — positioned above HUD on mobile, top-right on desktop */}
       {killFeed && killFeed.length > 0 && (
-        <div className="absolute top-16 sm:top-20 right-[max(env(safe-area-inset-right),0.5rem)] sm:right-[max(env(safe-area-inset-right),1rem)] z-25 flex flex-col items-end gap-1 pointer-events-none max-w-[240px] sm:max-w-xs">
+        <div className="absolute top-[max(env(safe-area-inset-top),4rem)] right-[max(env(safe-area-inset-right),0.5rem)] z-25 flex flex-col items-end gap-1 pointer-events-none max-w-[280px] sm:max-w-xs">
           {killFeed.slice(-5).map((kf) => (
             <div
               key={kf.id}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-mono backdrop-blur-md shadow-lg transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-mono backdrop-blur-md shadow-lg transition-all ${
                 kf.isBoss
                   ? 'bg-amber-950/95 border-amber-500/90 text-amber-200 ring-1 ring-amber-500/50'
                   : kf.isHeadshot
@@ -1169,6 +1169,82 @@ export const HUD: React.FC<HUDProps> = ({
               </div>
             ))}
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]" />
+          </div>
+        </div>
+      )}
+
+      {/* ROCKET LAUNCHER NIGHT VISION SCOPE OVERLAY — green phosphor optic */}
+      {player.isNightVision && (
+        <div className="absolute inset-0 z-30 pointer-events-none">
+          {/* Green phosphor overlay */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background: 'radial-gradient(ellipse at 50% 50%, rgba(0,40,0,0.3) 0%, rgba(0,10,0,0.85) 60%, rgba(0,5,0,0.95) 100%)',
+            }}
+          />
+          {/* Scanline overlay for CRT effect */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,255,0,0.03) 1px, rgba(0,255,0,0.03) 2px)',
+              opacity: 0.6,
+              animation: 'scanline 0.1s linear infinite',
+            }}
+          />
+          <style jsx>{`
+            @keyframes scanline {
+              0% { transform: translateY(0); }
+              100% { transform: translateY(2px); }
+            }
+          `}</style>
+          {/* Vignette */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background: 'radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(0,0,0,0.7) 100%)',
+            }}
+          />
+          {/* Optic frame */}
+          <div
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border-[4px] border-green-400/60"
+            style={{
+              width: 'min(70vh,70vw)',
+              height: 'min(70vh,70vw)',
+              boxShadow: 'inset 0 0 80px rgba(0,255,0,0.3), 0 0 30px rgba(0,255,0,0.2)',
+            }}
+          />
+          {/* Reticle: crosshair with range markers */}
+          <div
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+            style={{ width: 'min(68vh,68vw)', height: 'min(68vh,68vw)' }}
+          >
+            {/* Horizontal line */}
+            <div className="absolute left-0 right-0 top-1/2 h-px bg-green-400/90 -translate-y-1/2" />
+            {/* Vertical line */}
+            <div className="absolute top-0 bottom-0 left-1/2 w-px bg-green-400/90 -translate-x-1/2" />
+            {/* Range brackets */}
+            {[-0.25, -0.15, -0.05, 0.05, 0.15, 0.25].map((frac, i) => (
+              <div
+                key={frac}
+                className="absolute top-1/2 -translate-y-1/2 w-[24px] h-px bg-green-400/80"
+                style={{ left: `${50 + frac * 100}%` }}
+              >
+                <span className="absolute left-4 -top-1.5 font-mono text-[7px] text-green-300/90">{Math.round(100 + i * 50)}m</span>
+              </div>
+            ))}
+            {/* Center dot */}
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-green-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]" />
+          </div>
+          {/* NVG UI elements - top corners */}
+          <div className="absolute top-4 left-4 flex flex-col gap-1 text-green-400/80 font-mono text-[8px]">
+            <div>NVG MODE ACTIVE</div>
+            <div>THERMAL: ON</div>
+            <div>GAIN: AUTO</div>
+          </div>
+          <div className="absolute top-4 right-4 text-right text-green-400/80 font-mono text-[8px]">
+            <div>RANGE: 120m</div>
+            <div>AMMO: {player.currentMag}/{player.reserveAmmo}</div>
           </div>
         </div>
       )}

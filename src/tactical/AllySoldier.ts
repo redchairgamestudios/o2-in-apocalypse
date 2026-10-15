@@ -8,6 +8,7 @@ import { ProceduralTextures } from '../textures/ProceduralTextures';
 import { NavCollision } from '../core/NavCollision';
 import { AllyModelFactory, AllyRig } from '../models/AllyModel';
 import { AllyOrder } from '../types';
+import { SaveManager } from '../core/SaveManager';
 
 export interface AllyStatus {
   isActive: boolean;
@@ -159,6 +160,14 @@ interface AllyEntity {
   rig: AllyRig | null;
   gunGroup: THREE.Group | null;
   gunMuzzleDist: number;
+  // Upgrade system
+  upgradeHealth: number;    // +20% max HP per level
+  upgradeDamage: number;    // +15% damage per level
+  upgradeArmor: number;     // +10% damage reduction per level
+  upgradeRegen: number;     // +2 HP/sec per level
+  upgradeAccuracy: number;  // +10% accuracy per level
+  // Regen timer
+  regenTimer: number;
   // Debug telemetry (read via __dzGame.allySquad)
   dbgMoved?: number;
   dbgDelta?: number;
@@ -232,25 +241,29 @@ export class AllySoldier {
       this.upgradeSquadToRigs();
     });
 
+    // Load ally upgrades from save
+    const saveData = SaveManager.get();
+    const allyUpgrades = saveData.allyUpgrades || { healthLevel: 0, damageLevel: 0, armorLevel: 0, regenLevel: 0, accuracyLevel: 0 };
+
     const actualCount = Math.max(1, Math.min(5, count));
     this.radioMessage = `Tactical Fireteam deployed: ${actualCount} combat specialists escorting Commander.`;
     this.radioTimer = 5.0;
 
     for (let i = 0; i < actualCount; i++) {
       const profile = ALLY_PROFILES[i];
-      const entity = this.buildSoldierMesh(scene, spawnPos, profile);
+      const entity = this.buildSoldierMesh(scene, spawnPos, profile, allyUpgrades);
       this.squad.push(entity);
     }
   }
 
-  private static buildSoldierMesh(scene: THREE.Scene, spawnPos: THREE.Vector3, profile: AllyProfile): AllyEntity {
+  private static buildSoldierMesh(scene: THREE.Scene, spawnPos: THREE.Vector3, profile: AllyProfile, allyUpgrades: any): AllyEntity {
     // Prefer the skinned character rig; fall back to the procedural soldier
     // while the GLB is still streaming (or if it failed to load).
     const rig = AllyModelFactory.createRig(profile.id);
     if (rig) {
-      return this.buildGltfSoldierMesh(scene, spawnPos, profile, rig);
+      return this.buildGltfSoldierMesh(scene, spawnPos, profile, rig, allyUpgrades);
     }
-    return this.buildProceduralSoldierMesh(scene, spawnPos, profile);
+    return this.buildProceduralSoldierMesh(scene, spawnPos, profile, allyUpgrades);
   }
 
   /**
@@ -370,7 +383,7 @@ export class AllySoldier {
   }
 
   /** Skinned character rig squad member (Winter Soldier GLB). */
-  private static buildGltfSoldierMesh(scene: THREE.Scene, spawnPos: THREE.Vector3, profile: AllyProfile, rig: AllyRig): AllyEntity {
+  private static buildGltfSoldierMesh(scene: THREE.Scene, spawnPos: THREE.Vector3, profile: AllyProfile, rig: AllyRig, allyUpgrades: any): AllyEntity {
     const root = new THREE.Group();
     root.name = `tactical_ally_${profile.id}`;
     root.position.set(spawnPos.x + profile.offsetX, 0, spawnPos.z + profile.offsetZ);
@@ -394,10 +407,17 @@ export class AllySoldier {
     root.add(healthBar.group);
     scene.add(root);
 
+    // Apply upgrades
+    const baseMaxHp = profile.maxHp * (1 + allyUpgrades.healthLevel * 0.20);
+    const baseDamage = profile.damage * (1 + allyUpgrades.damageLevel * 0.15);
+    const armorReduction = allyUpgrades.armorLevel * 0.10;
+    const regenRate = allyUpgrades.regenLevel * 2.0; // HP/sec
+    const accuracyBonus = allyUpgrades.accuracyLevel * 0.10;
+
     return {
       profile,
-      hp: profile.maxHp,
-      maxHp: profile.maxHp,
+      hp: baseMaxHp,
+      maxHp: baseMaxHp,
       isAlive: true,
       kills: 0,
       mesh: root,
@@ -421,10 +441,20 @@ export class AllySoldier {
       rig,
       gunGroup: socket ? rifle.group : null,
       gunMuzzleDist: rifle.muzzleDist,
+      // Upgrade system
+      upgradeHealth: allyUpgrades.healthLevel,
+      upgradeDamage: allyUpgrades.damageLevel,
+      upgradeArmor: allyUpgrades.armorLevel,
+      upgradeRegen: allyUpgrades.regenLevel,
+      upgradeAccuracy: allyUpgrades.accuracyLevel,
+      regenTimer: 0,
+      // Debug telemetry
+      dbgMoved: 0,
+      dbgDelta: 0,
     };
   }
 
-  private static buildProceduralSoldierMesh(scene: THREE.Scene, spawnPos: THREE.Vector3, profile: AllyProfile): AllyEntity {
+private static buildProceduralSoldierMesh(scene: THREE.Scene, spawnPos: THREE.Vector3, profile: AllyProfile, allyUpgrades: any): AllyEntity {
     const root = new THREE.Group();
     root.name = `tactical_ally_${profile.id}`;
     root.position.set(spawnPos.x + profile.offsetX, 0, spawnPos.z + profile.offsetZ);
@@ -537,10 +567,17 @@ export class AllySoldier {
     root.add(healthBar.group);
     scene.add(root);
 
+    // Apply upgrades
+    const baseMaxHp = profile.maxHp * (1 + allyUpgrades.healthLevel * 0.20);
+    const baseDamage = profile.damage * (1 + allyUpgrades.damageLevel * 0.15);
+    const armorReduction = allyUpgrades.armorLevel * 0.10;
+    const regenRate = allyUpgrades.regenLevel * 2.0; // HP/sec
+    const accuracyBonus = allyUpgrades.accuracyLevel * 0.10;
+
     return {
       profile,
-      hp: profile.maxHp,
-      maxHp: profile.maxHp,
+      hp: baseMaxHp,
+      maxHp: baseMaxHp,
       isAlive: true,
       kills: 0,
       mesh: root,
@@ -564,6 +601,16 @@ export class AllySoldier {
       rig: null,
       gunGroup: null,
       gunMuzzleDist: 0.8,
+      // Upgrade system
+      upgradeHealth: allyUpgrades.healthLevel,
+      upgradeDamage: allyUpgrades.damageLevel,
+      upgradeArmor: allyUpgrades.armorLevel,
+      upgradeRegen: allyUpgrades.regenLevel,
+      upgradeAccuracy: allyUpgrades.accuracyLevel,
+      regenTimer: 0,
+      // Debug telemetry
+      dbgMoved: 0,
+      dbgDelta: 0,
     };
   }
 
@@ -599,6 +646,15 @@ export class AllySoldier {
     for (const soldier of this.squad) {
       if (!soldier.isAlive || !soldier.mesh) continue;
 
+      // Health regeneration from upgrades
+      if (soldier.upgradeRegen > 0 && soldier.hp < soldier.maxHp) {
+        soldier.regenTimer += delta;
+        if (soldier.regenTimer >= 1.0) {
+          soldier.hp = Math.min(soldier.maxHp, soldier.hp + (soldier.upgradeRegen * 2.0));
+          soldier.regenTimer = 0;
+        }
+      }
+
       // Update 3D overhead health bar billboard
       if (soldier.healthBarGroup && soldier.healthBarFill) {
         soldier.healthBarGroup.lookAt(playerPos.x, soldier.mesh.position.y + 1.95, playerPos.z);
@@ -619,7 +675,12 @@ export class AllySoldier {
         if (z.isDead) continue;
         const d = soldier.mesh.position.distanceTo(z.mesh.position);
         if (d < z.config.attackRange + 0.35 && z.attackTimer <= 0) {
-          soldier.hp = Math.max(0, soldier.hp - z.config.damage * 0.55);
+          if (soldier.upgradeArmor > 0) {
+            const armorReduction = Math.min(0.5, (soldier.upgradeArmor || 0) * 0.10);
+            soldier.hp = Math.max(0, soldier.hp - z.config.damage * 0.55 * (1 - armorReduction));
+          } else {
+            soldier.hp = Math.max(0, soldier.hp - z.config.damage * 0.55);
+          }
           ParticleSystem.spawnBlood(
             soldier.mesh.position.clone().add(new THREE.Vector3(0, 1.2, 0)),
             new THREE.Vector3(0, 0.4, 0)
@@ -818,9 +879,10 @@ export class AllySoldier {
               GunEffects.spawnMuzzleFlash(muzzlePos, aimDir, 0.7);
               GunEffects.spawnTracer(muzzlePos, targetChest, 0.85);
 
-              // Calculate damage
-              const isHead = Math.random() < soldier.profile.headshotRate;
-              const dmg = isHead ? Math.round(soldier.profile.damage * 2.2) : soldier.profile.damage;
+              // Calculate damage with upgrades
+              const baseDmg = soldier.profile.damage * (1 + (soldier.upgradeDamage || 0) * 0.15);
+              const isHead = Math.random() < (soldier.profile.headshotRate + (soldier.upgradeAccuracy || 0) * 0.10);
+              const dmg = isHead ? Math.round(baseDmg * 2.2) : Math.round(baseDmg);
 
               zombieManager.applyDamage(
                 {

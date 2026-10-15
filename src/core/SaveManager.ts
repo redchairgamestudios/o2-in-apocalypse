@@ -10,6 +10,14 @@ const DEFAULT_DRONE_UPGRADES: DroneUpgrades = {
   speedLevel: 0,
 };
 
+const DEFAULT_ALLY_UPGRADES: AllyUpgrades = {
+  healthLevel: 0,
+  damageLevel: 0,
+  armorLevel: 0,
+  regenLevel: 0,
+  accuracyLevel: 0,
+};
+
 const DEFAULT_SETTINGS: GameSettings = {
   masterVolume: 0.8,
   sfxVolume: 0.9,
@@ -28,8 +36,8 @@ const DEFAULT_SETTINGS: GameSettings = {
 };
 
 const DEFAULT_SAVE_DATA: PlayerSaveData = {
-  credits: 450, // Starting cash bonus for vertical slice excitement
-  unlockedWeapons: ['pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper', 'rocket', 'katana', 'airstrike'], // All weapons unlocked so player can swap to all guns!
+  credits: 450,
+  unlockedWeapons: ['pistol', 'shotgun', 'rifle', 'smg', 'heavy', 'sniper', 'rocket', 'katana', 'airstrike'],
   equippedWeapon: 'pistol',
   upgrades: {
     pistol: { damageLevel: 0, magLevel: 0, fireRateLevel: 0, reloadLevel: 0 },
@@ -44,15 +52,16 @@ const DEFAULT_SAVE_DATA: PlayerSaveData = {
   },
   completedMissions: [],
   highestMissionUnlocked: 1,
-  grenades: 3, // Start with 3 tactical frag grenades
-  turrets: 1,  // Start with 1 deployable sentry turret
-  airstrikes: 20, // Start with 20 satellite strike charges (generous for testing)
-  hasAllyRecruit: false, // Up to 5 combat allies can be recruited in Arsenal
+  grenades: 3,
+  turrets: 1,
+  airstrikes: 20,
+  hasAllyRecruit: false,
   allyCount: 0,
   isAllyDeployed: true,
-  hasPowerfulFlashlight: false, // Military 3,500-lumen tactical searchlight ($500)
+  hasPowerfulFlashlight: false,
   hasDrone: false,
   droneUpgrades: { ...DEFAULT_DRONE_UPGRADES },
+  allyUpgrades: { ...DEFAULT_ALLY_UPGRADES },
   settings: DEFAULT_SETTINGS,
 };
 
@@ -80,6 +89,10 @@ export class SaveManager {
           droneUpgrades: {
             ...DEFAULT_DRONE_UPGRADES,
             ...(parsed.droneUpgrades || {}),
+          },
+          allyUpgrades: {
+            ...DEFAULT_ALLY_UPGRADES,
+            ...(parsed.allyUpgrades || {}),
           },
           upgrades: {
             ...DEFAULT_SAVE_DATA.upgrades,

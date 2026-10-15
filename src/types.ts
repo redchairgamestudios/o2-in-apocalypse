@@ -111,6 +111,14 @@ export interface DroneUpgrades {
   speedLevel: number;
 }
 
+export interface AllyUpgrades {
+  healthLevel: number;      // +20% max HP per level
+  damageLevel: number;      // +15% damage per level
+  armorLevel: number;       // +10% damage reduction per level
+  regenLevel: number;       // +2 HP/sec regen per level
+  accuracyLevel: number;    // +10% accuracy per level
+}
+
 export interface PlayerSaveData {
   credits: number;
   unlockedWeapons: WeaponTypeKey[];

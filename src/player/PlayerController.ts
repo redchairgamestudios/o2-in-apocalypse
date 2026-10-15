@@ -120,6 +120,11 @@ export class PlayerController {
     return this.isAiming && this.equippedWeaponKey === 'sniper';
   }
 
+  /** True while aiming down the rocket launcher's night-vision scope. */
+  get isNightVision(): boolean {
+    return this.isAiming && this.equippedWeaponKey === 'rocket';
+  }
+
   constructor() {
     // Camera far plane follows the view-distance setting to reduce raster
     // work; the fog always ends before the far plane so nothing pops.
@@ -829,7 +834,12 @@ export class PlayerController {
         let isHeadshot = false;
 
         if (hitZone === 'HEAD') {
-          zoneMult = this.weaponConfig.headshotMultiplier;
+          // Sniper headshots scale with damage upgrade level for extra lethality
+          let headshotMult = this.weaponConfig.headshotMultiplier;
+          if (this.equippedWeaponKey === 'sniper') {
+            headshotMult *= (1 + this.upgrades.damageLevel * 0.25); // +25% headshot multiplier per damage tier
+          }
+          zoneMult = headshotMult;
           isHeadshot = true;
           soundFx.playHeadshotSound();
         } else if (hitZone === 'WEAKPOINT') {

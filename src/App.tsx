@@ -1495,8 +1495,8 @@ export default function App() {
       cutsceneRef.current.setDropPoint(newEnv.playerSpawn);
     }
 
-    // Configure atmospheric dynamic weather for this sector
-    WeatherSystem.setMissionWeather(missionId);
+    // Configure atmospheric dynamic weather for this sector — 90% clear, 10% rain
+    WeatherSystem.initRandomWeather();
     WeatherSystem.setBaseFogColor(newEnv.fogColor);
   };
 

@@ -346,6 +346,29 @@ export class WeatherSystem {
     return this.currentWeather;
   }
 
+  /** Returns a random weather with 90% chance of clear weather, 10% rain */
+  public static getRandomWeather(): WeatherState {
+    const clearTypes: WeatherType[] = ['SUNNY_DAY', 'GOLDEN_AFTERNOON', 'CLEAR_NIGHT', 'SUNNY_DAY', 'GOLDEN_AFTERNOON'];
+    const rainTypes: WeatherType[] = ['AFTERNOON_RAIN', 'HEAVY_RAIN'];
+    
+    const roll = Math.random();
+    if (roll < 0.9) {
+      // 90% chance of clear weather
+      return WEATHER_CONFIGS[clearTypes[Math.floor(Math.random() * clearTypes.length)]];
+    } else {
+      // 10% chance of rain
+      return WEATHER_CONFIGS[rainTypes[Math.floor(Math.random() * rainTypes.length)]];
+    }
+  }
+
+  /** Initialize weather with 90% clear / 10% rain probability */
+  public static initRandomWeather(): WeatherState {
+    const weather = this.getRandomWeather();
+    this.currentWeather = weather;
+    this.applyWeatherVisuals();
+    return weather;
+  }
+
   public static cycleEnvironment(): WeatherState {
     const cycleList: WeatherType[] = ['SUNNY_DAY', 'AFTERNOON_RAIN', 'GOLDEN_AFTERNOON', 'CLEAR_NIGHT', 'HEAVY_RAIN'];
     const currIdx = cycleList.indexOf(this.currentWeather.type);
