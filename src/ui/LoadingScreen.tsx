@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from 'react';
-// Imported through Vite so the file gets a content-hashed URL — the PWA
-// precache marks public/-dir files revision:null and would serve a stale
-// copy forever when the image is replaced under the same path.
-import loadingScreenImg from '../assets/loading-screen.png';
+// Use public/ path for stable URL that works with PWA caching on Vercel
+const loadingScreenImg = '/loading-screen.png';
 
 interface LoadingScreenProps {
   onComplete: (missionId: number) => void;
