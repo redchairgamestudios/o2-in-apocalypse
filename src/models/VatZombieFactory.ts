@@ -472,6 +472,12 @@ export function updateVatZombie(
   const vatData = (zombie as any).vatData;
   if (!vatData) return;
   
+  // Defensive: ensure material and uniforms exist
+  if (!vatData.material || !vatData.material.uniforms) {
+    console.warn('[VAT] Missing material/uniforms, skipping update');
+    return;
+  }
+  
   const { animSet, material, currentClip, frameIndex, frameBlend, timeScale, loop } = vatData;
   
   // Determine clip based on state (same logic as GltfZombieFactory)
@@ -523,6 +529,14 @@ export function updateVatZombie(
     newTimeScale *= Math.max(0.35, zombie.slowMultiplier);
   }
   
+  // Safe uniform setter to avoid "Cannot set properties of undefined"
+  const setUniform = (name: string, value: number | THREE.Color) => {
+    const uniform = material.uniforms[name];
+    if (uniform && typeof uniform.value !== 'undefined') {
+      uniform.value = value;
+    }
+  };
+  
   // Crossfade logic
   if (clipName !== vatData.currentClip) {
     vatData.currentClip = clipName;
@@ -535,7 +549,7 @@ export function updateVatZombie(
     vatData.clipIndex = clipNames.indexOf(clipName);
     if (vatData.clipIndex < 0) vatData.clipIndex = 0;
     
-    material.uniforms.uClipIndex.value = vatData.clipIndex;
+    setUniform('uClipIndex', vatData.clipIndex);
   } else {
     vatData.timeScale = THREE.MathUtils.lerp(vatData.timeScale, newTimeScale, delta * 5);
     vatData.loop = newLoop;
@@ -555,16 +569,16 @@ export function updateVatZombie(
     
     vatData.frameBlend = vatData.frameIndex - Math.floor(vatData.frameIndex);
     
-    material.uniforms.uFrameIndex.value = vatData.frameIndex;
-    material.uniforms.uFrameBlend.value = vatData.frameBlend;
-    material.uniforms.uTime.value = performance.now() * 0.001;
+    setUniform('uFrameIndex', vatData.frameIndex);
+    setUniform('uFrameBlend', vatData.frameBlend);
+    setUniform('uTime', performance.now() * 0.001);
   }
   
   // Damage flash
   if (zombie.gltfRig && zombie.gltfRig.currentState === 'STAGGER') {
-    material.uniforms.uFlash.value = Math.min(1.0, material.uniforms.uFlash.value + delta * 10);
+    setUniform('uFlash', Math.min(1.0, (material.uniforms.uFlash?.value ?? 0) + delta * 10));
   } else {
-    material.uniforms.uFlash.value = Math.max(0, material.uniforms.uFlash.value - delta * 5);
+    setUniform('uFlash', Math.max(0, (material.uniforms.uFlash?.value ?? 0) - delta * 5));
   }
   
   // Boss weakpoint pulse
@@ -575,7 +589,7 @@ export function updateVatZombie(
   
   // Decapitation
   if (zombie.isDecapitated) {
-    material.uniforms.uDecapitated.value = 1;
+    setUniform('uDecapitated', 1);
   }
 }
 
