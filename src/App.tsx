@@ -1831,8 +1831,14 @@ export default function App() {
           }}
           onInteract={() => {
             if (playerRef.current && missionManagerRef.current) {
-              missionManagerRef.current.tryInteractObjective(playerRef.current.position);
-              missionManagerRef.current.interactRequested = true;
+              // Try to undeploy turret first if near one
+              const turretUndeployed = TurretManager.undeployTurret(playerRef.current.position);
+              if (turretUndeployed) {
+                // Turret was undeployed, don't try mission objective
+              } else {
+                missionManagerRef.current.tryInteractObjective(playerRef.current.position);
+                missionManagerRef.current.interactRequested = true;
+              }
             }
           }}
           onSprintToggle={() => setIsSprinting((prev) => !prev)}

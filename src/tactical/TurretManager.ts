@@ -39,6 +39,36 @@ export class TurretManager {
     this.turrets = [];
   }
 
+  /**
+   * Remove a specific turret by position (within range)
+   * Returns true if a turret was removed
+   */
+  public static undeployTurret(playerPosition: THREE.Vector3, maxRange: number = 4.0): boolean {
+    if (!this.scene || this.turrets.length === 0) return false;
+
+    for (let i = this.turrets.length - 1; i >= 0; i--) {
+      const t = this.turrets[i];
+      const dist = t.mesh.position.distanceTo(playerPosition);
+      if (dist <= maxRange) {
+        // Remove the turret
+        this.scene.remove(t.mesh);
+        this.turrets.splice(i, 1);
+        soundFx.playReloadSequence(); // reuse reload sound for packing up
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public static getClosestTurretDistance(playerPosition: THREE.Vector3): number {
+    let minDist = Infinity;
+    for (const t of this.turrets) {
+      const dist = t.mesh.position.distanceTo(playerPosition);
+      if (dist < minDist) minDist = dist;
+    }
+    return minDist;
+  }
+
   public static getTurrets(): DefenseTurret[] {
     return this.turrets;
   }
