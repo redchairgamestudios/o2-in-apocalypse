@@ -18,30 +18,14 @@ export class AirStrikeManager {
   private static maxCharges = 4;
   private static cooldownTimer = 0;
   private static readonly COOLDOWN = 15; // seconds between strikes
-  private static readonly BASE_STRIKE_RADIUS = 15;
-  private static readonly BASE_STRIKE_DAMAGE = 800;
+  private static readonly STRIKE_RADIUS = 15;
+  private static readonly STRIKE_DAMAGE = 800;
   private static readonly TARGETING_HEIGHT = 80; // bird's-eye camera height
   private static readonly TARGETING_RANGE = 120; // max distance from player
   private static strikeEffect: THREE.Group | null = null;
   private static pendingStrike: AirStrikeTarget | null = null;
   private static onStrikeDamage: ((position: THREE.Vector3, radius: number, damage: number) => void) | null = null;
   private static enterGraceTimer = 0; // ignore shoot briefly after entering (same click shouldn't fire)
-  private static currentDamageLevel = 0; // 0-5 upgrade level
-
-  /** Get current strike radius with upgrade scaling */
-  static getStrikeRadius(): number {
-    return this.BASE_STRIKE_RADIUS * (1 + this.currentDamageLevel * 0.15); // +15% per tier
-  }
-
-  /** Get current strike damage with upgrade scaling */
-  static getStrikeDamage(): number {
-    return this.BASE_STRIKE_DAMAGE * (1 + this.currentDamageLevel * 0.20); // +20% per tier
-  }
-
-  /** Set current damage upgrade level (called when player upgrades airstrike) */
-  static setDamageLevel(level: number): void {
-    this.currentDamageLevel = Math.max(0, Math.min(5, level));
-  }
 
   static init(
     scene: THREE.Scene,
@@ -163,14 +147,10 @@ export class AirStrikeManager {
     this.charges--;
     this.cooldownTimer = this.COOLDOWN;
 
-    // Use upgraded values
-    const strikeRadius = this.getStrikeRadius();
-    const strikeDamage = this.getStrikeDamage();
-
     // Create pending strike for visual feedback
     this.pendingStrike = {
       position: position.clone(),
-      radius: strikeRadius,
+      radius: this.STRIKE_RADIUS,
       timestamp: performance.now()
     };
 
@@ -179,21 +159,18 @@ export class AirStrikeManager {
 
     // Damage zombies in radius via callback
     if (this.onStrikeDamage) {
-      this.onStrikeDamage(position, strikeRadius, strikeDamage);
+      this.onStrikeDamage(position, this.STRIKE_RADIUS, this.STRIKE_DAMAGE);
     }
   }
 
   private static createStrikeVisual(position: THREE.Vector3): void {
     if (!this.scene || !this.strikeEffect) return;
 
-    const strikeRadius = this.getStrikeRadius();
-    const strikeDamage = this.getStrikeDamage();
-
     const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
     const fxScale = isTouch ? 1.5 : 1.0; // Larger on mobile for visibility
 
     // Warning marker on ground (appears before strike)
-    const markerGeometry = new THREE.RingGeometry(strikeRadius - 0.5, strikeRadius + 0.5, 32);
+    const markerGeometry = new THREE.RingGeometry(this.STRIKE_RADIUS - 0.5, this.STRIKE_RADIUS + 0.5, 32);
     const markerMaterial = new THREE.MeshBasicMaterial({
       color: 0xff3300,
       side: THREE.DoubleSide,
@@ -207,7 +184,7 @@ export class AirStrikeManager {
     this.strikeEffect.add(marker);
 
     // Incoming missile trail (from sky) - MUCH THICKER AND BRIGHTER
-    const trailRadius = 0.6 * fxScale;
+    const trailRadius = 0.6 * 1.5;
     const trailGeometry = new THREE.CylinderGeometry(trailRadius * 0.5, trailRadius * 1.5, this.TARGETING_HEIGHT, 12);
     const trailMaterial = new THREE.MeshBasicMaterial({
       color: 0xff6600,
@@ -240,15 +217,12 @@ export class AirStrikeManager {
   private static createExplosion(position: THREE.Vector3): void {
     if (!this.scene || !this.strikeEffect) return;
 
-    const strikeRadius = this.getStrikeRadius();
-    const strikeDamage = this.getStrikeDamage();
-
     const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
     const effectsQuality = (() => { try { const { GraphicsSettings } = require('../core/GraphicsSettings'); return GraphicsSettings.get().effectsQuality; } catch { return 'LOW'; } })();
     const fxScale = isTouch ? 0.5 : 1.0; // Base scale for mobile
 
     // Ground scorch mark
-    const scorchGeometry = new THREE.CircleGeometry(strikeRadius, 64);
+    const scorchGeometry = new THREE.CircleGeometry(this.STRIKE_RADIUS, 64);
     const scorchMaterial = new THREE.MeshBasicMaterial({
       color: 0x1a0a00,
       transparent: true,
@@ -275,9 +249,9 @@ export class AirStrikeManager {
 
     // FIRE PARTICLES - MUCH LARGER AND MORE VISIBLE
     const baseParticleCount = 80;
-    const particleCount = Math.round(baseParticleCount * fxScale * (effectsQuality === 'LOW' ? 0.5 : effectsQuality === 'MEDIUM' ? 0.75 : 1.0));
-    const particleSize = isTouch ? 0.8 : 0.6; // Much larger on mobile
-    const particleGeometry = new THREE.SphereGeometry(particleSize, 8, 8);
+    const particleCount = Math.round(baseParticleCount * 1.0 * (effectsQuality === 'LOW' ? 0.5 : effectsQuality === 'MEDIUM' ? 0.75 : 1.0));
+    const particleSize = 0.8;
+    const particleGeometry = new THREE.SphereGeometry(0.8, 8, 8);
     const particleMaterial = new THREE.MeshBasicMaterial({
       color: 0xff8800,
       transparent: true,
@@ -289,7 +263,7 @@ export class AirStrikeManager {
     for (let i = 0; i < particleCount; i++) {
       const particle = new THREE.Mesh(particleGeometry, particleMaterial.clone());
       const angle = (i / particleCount) * Math.PI * 2;
-      const radius = Math.random() * strikeRadius * 0.9;
+      const radius = Math.random() * this.STRIKE_RADIUS * 0.9;
       particle.position.set(
         position.x + Math.cos(angle) * radius,
         1.0 + Math.random() * 4, // Start higher up
@@ -329,7 +303,7 @@ export class AirStrikeManager {
       shockTime += 1/60;
       const progress = shockTime / shockDuration;
       if (progress <= 1) {
-        ring.scale.setScalar(1 + progress * strikeRadius * 1.2);
+        ring.scale.setScalar(1 + progress * this.STRIKE_RADIUS * 1.2);
         ringMaterial.opacity = 0.9 * (1 - progress);
         requestAnimationFrame(animateShockwave);
       } else {
