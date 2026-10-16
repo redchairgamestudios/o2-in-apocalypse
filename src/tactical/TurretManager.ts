@@ -4,6 +4,7 @@ import { ParticleSystem } from '../effects/ParticleSystem';
 import { GunEffects } from '../effects/GunEffects';
 import { ZombieManager } from '../zombies/ZombieManager';
 import { ZombieInstance } from '../models/ZombieModel';
+import { SaveManager } from '../core/SaveManager';
 
 export interface DefenseTurret {
   id: string;
@@ -40,8 +41,10 @@ export class TurretManager {
   }
 
   /**
-   * Remove a specific turret by position (within range)
-   * Returns true if a turret was removed
+   * Remove a specific turret by position (within range) and refund the
+   * turret charge to the player's persistent inventory so it can be
+   * redeployed later at another location.
+   * Returns true if a turret was removed.
    */
   public static undeployTurret(playerPosition: THREE.Vector3, maxRange: number = 4.0): boolean {
     if (!this.scene || this.turrets.length === 0) return false;
@@ -50,7 +53,10 @@ export class TurretManager {
       const t = this.turrets[i];
       const dist = t.mesh.position.distanceTo(playerPosition);
       if (dist <= maxRange) {
-        // Remove the turret
+        // Refund the charge to the persistent inventory BEFORE removing
+        SaveManager.addTurrets(1);
+
+        // Remove the turret from the scene
         this.scene.remove(t.mesh);
         this.turrets.splice(i, 1);
         soundFx.playReloadSequence(); // reuse reload sound for packing up

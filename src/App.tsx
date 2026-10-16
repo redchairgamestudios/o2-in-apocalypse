@@ -1832,10 +1832,11 @@ if (e.code === 'KeyE') {
           }}
           onInteract={() => {
             if (playerRef.current && missionManagerRef.current) {
-              // Try to undeploy turret first if near one
+              // Try to undeploy turret first if near one (refunds the charge for reuse)
               const turretUndeployed = TurretManager.undeployTurret(playerRef.current.position);
               if (turretUndeployed) {
-                // Turret was undeployed, don't try mission objective
+                // Refresh HUD so the refunded turret count shows immediately
+                setSaveData({ ...SaveManager.get() });
               } else {
                 missionManagerRef.current.tryInteractObjective(playerRef.current.position);
                 missionManagerRef.current.interactRequested = true;
