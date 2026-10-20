@@ -75,7 +75,7 @@ export class ZombieManager {
     const limits = getZombieLimits(GraphicsSettings.get().effectsQuality, isTouch);
     this.MAX_ALIVE = limits.maxAlive;
     this.MAX_CORPSES = limits.maxCorpses;
-    this.farCullDistance = isTouch ? 55 : 85;
+    this.farCullDistance = isTouch ? 40 : 85;
   }
 
   /** Live cap change from the graphics settings UI (no scene remount). */

@@ -159,28 +159,28 @@ export class WeatherSystem {
       'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
     const effects = GraphicsSettings.get().effectsQuality;
     
-    // DRAMATICALLY reduced counts for mobile LOW
-    // LOW: 300 rain, 50 embers, 20 splashes
-    // MEDIUM: 600 rain, 100 embers, 40 splashes
-    // HIGH: 1200 rain, 200 embers, 80 splashes
+    // AGGRESSIVELY reduced counts for mobile - performance first
+    // LOW: 30 rain, 10 embers, 5 splashes
+    // MEDIUM: 60 rain, 20 embers, 10 splashes
+    // HIGH: 90 rain, 30 embers, 15 splashes
     // Desktop: full counts
     let weatherScale: number;
     if (isTouch) {
       switch (effects) {
         case 'LOW':
-          weatherScale = 0.05; // ~90 rain particles (was 0.17)
+          weatherScale = 0.017; // ~30 rain particles
           break;
         case 'MEDIUM':
-          weatherScale = 0.1;  // ~180 rain particles (was 0.33)
+          weatherScale = 0.033; // ~60 rain particles
           break;
         case 'HIGH':
-          weatherScale = 0.2;  // ~360 rain particles (was 0.67)
+          weatherScale = 0.05;  // ~90 rain particles
           break;
         case 'ULTRA':
-          weatherScale = 0.33; // ~600 rain particles (was 1.0)
+          weatherScale = 0.1;   // ~180 rain particles
           break;
         default:
-          weatherScale = 0.1;
+          weatherScale = 0.033;
       }
     } else {
       weatherScale = 1.0;

@@ -180,17 +180,17 @@ export function getParticleScale(effects: EffectsQuality): number {
 export function getZombieLimits(effects: EffectsQuality, isTouch: boolean): { maxAlive: number; maxCorpses: number } {
   if (isTouch) {
     switch (effects) {
-      case 'LOW': return { maxAlive: 6, maxCorpses: 4 };
-      case 'MEDIUM': return { maxAlive: 8, maxCorpses: 6 };
-      case 'HIGH': return { maxAlive: 10, maxCorpses: 8 };
-      case 'ULTRA': return { maxAlive: 12, maxCorpses: 10 };
+      case 'LOW': return { maxAlive: 3, maxCorpses: 1 };
+      case 'MEDIUM': return { maxAlive: 4, maxCorpses: 2 };
+      case 'HIGH': return { maxAlive: 5, maxCorpses: 3 };
+      case 'ULTRA': return { maxAlive: 6, maxCorpses: 4 };
     }
   }
   switch (effects) {
-    case 'LOW': return { maxAlive: 14, maxCorpses: 14 };
-    case 'MEDIUM': return { maxAlive: 18, maxCorpses: 18 };
-    case 'HIGH': return { maxAlive: 24, maxCorpses: 22 };
-    case 'ULTRA': return { maxAlive: 24, maxCorpses: 22 };
+    case 'LOW': return { maxAlive: 10, maxCorpses: 8 };
+    case 'MEDIUM': return { maxAlive: 14, maxCorpses: 10 };
+    case 'HIGH': return { maxAlive: 18, maxCorpses: 14 };
+    case 'ULTRA': return { maxAlive: 20, maxCorpses: 16 };
   }
 }
 

@@ -156,24 +156,24 @@ export class ParticleSystem {
     if (isTouch) {
       switch (effects) {
         case 'LOW':
-          PARTICLE_POOL = 50;
-          DECAL_POOL = 20;
+          PARTICLE_POOL = 15;
+          DECAL_POOL = 5;
           break;
         case 'MEDIUM':
-          PARTICLE_POOL = 80;
-          DECAL_POOL = 35;
+          PARTICLE_POOL = 25;
+          DECAL_POOL = 10;
           break;
         case 'HIGH':
-          PARTICLE_POOL = 120;
-          DECAL_POOL = 50;
+          PARTICLE_POOL = 35;
+          DECAL_POOL = 15;
           break;
         case 'ULTRA':
-          PARTICLE_POOL = 150;
-          DECAL_POOL = 70;
+          PARTICLE_POOL = 40;
+          DECAL_POOL = 20;
           break;
         default:
-          PARTICLE_POOL = 80;
-          DECAL_POOL = 35;
+          PARTICLE_POOL = 25;
+          DECAL_POOL = 10;
       }
     } else {
       PARTICLE_POOL = Math.round(300 * this.fxScale);

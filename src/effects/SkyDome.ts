@@ -67,8 +67,12 @@ export class SkyDome {
     const effects = GraphicsSettings.get().effectsQuality;
     const isTouch =
       'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 1024;
+    // AGGRESSIVE: force low geometry on ALL touch devices
     const isLow = effects === 'LOW' || isTouch;
-    const geo = new THREE.SphereGeometry(210, isLow ? 16 : 32, isLow ? 10 : 20);
+    // AGGRESSIVE: even lower on mobile
+    const widthSegments = isTouch ? 8 : (isLow ? 16 : 32);
+    const heightSegments = isTouch ? 6 : (isLow ? 10 : 20);
+    const geo = new THREE.SphereGeometry(210, widthSegments, heightSegments);
     
     this.material = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.clone(SkyShader.uniforms),
@@ -84,8 +88,8 @@ export class SkyDome {
     this.mesh.frustumCulled = false;
     scene.add(this.mesh);
 
-    // REDUCED star count on LOW preset
-    const starCount = isLow ? 120 : 420;
+    // REDUCED star count on LOW preset or mobile
+    const starCount = isTouch ? 20 : (isLow ? 60 : 420);
     const positions = new Float32Array(starCount * 3);
     for (let i = 0; i < starCount; i++) {
       positions[i * 3] = (Math.random() - 0.5) * 360;
