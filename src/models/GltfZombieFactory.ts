@@ -15,7 +15,7 @@ import type { ZombieInstance } from './ZombieModel';
  * by julianmurcia245 (https://sketchfab.com/julianmurcia245), CC-BY-4.0.
  */
 
-const MODEL_URL = '/assets/models/zombie/scene.gltf';
+const MODEL_URL = '/assets/models/zombie/zombie_bind_hunter.glb';
 const TARGET_HEIGHT = 1.82; // meters at config.scale === 1.0
 
 export interface GltfRig {
@@ -134,6 +134,10 @@ export class GltfZombieFactory {
   /**
    * Build a clone rig for one zombie. Returns null while the GLTF is still
    * loading (caller falls back to the procedural zombie).
+   * 
+   * Note: The new model (zombie_bind_hunter.glb) is a static model without
+   * skeleton/animations. Hitboxes are created based on the model's geometry
+   * using approximate positions relative to the model's bounding box.
    */
   public static createRig(zombieId: string, config: ZombieConfig): {
     rig: GltfRig;
@@ -176,154 +180,149 @@ export class GltfZombieFactory {
       }
     });
 
-    // Clip lookup table
-    const clips: Record<string, THREE.AnimationClip> = {};
-    for (const c of this.clips) clips[c.name] = c;
+    // Compute model bounds for hitbox placement
+    const bbox = new THREE.Box3().setFromObject(root);
+    const height = bbox.max.y - bbox.min.y;
+    const width = bbox.max.x - bbox.min.x;
+    const depth = bbox.max.z - bbox.min.z;
+    const centerY = (bbox.max.y + bbox.min.y) / 2;
+    const centerX = (bbox.max.x + bbox.min.x) / 2;
+    const centerZ = (bbox.max.z + bbox.min.z) / 2;
 
-    const mixer = new THREE.AnimationMixer(root);
+    // No skeleton/animations - use static model with procedural hitboxes
+    const clips: Record<string, THREE.AnimationClip> = {};
+    const mixer = new THREE.AnimationMixer(root); // dummy mixer for compatibility
+    
     const rig: GltfRig = {
       root,
       mixer,
-      clips,
-      headBone: this.findBone(root, 'head_014'),
-      jawBone: this.findBone(root, 'jaw_019'),
+      clips: {},
+      headBone: null,
+      jawBone: null,
       currentAction: null,
       currentState: '',
     };
 
-    // ---- Invisible hitboxes parented to bones (follow animation) ----
+    // ---- Invisible hitboxes positioned relative to model bounds ----
     const hitboxMeshes: THREE.Mesh[] = [];
     const addHitbox = (
-      boneName: string,
-      radius: number,
       zone: 'HEAD' | 'TORSO' | 'LIMB',
-      offset?: [number, number, number],
+      radius: number,
+      offset: [number, number, number],
       limb?: 'ARM_L' | 'ARM_R' | 'LEG_L' | 'LEG_R'
     ) => {
-      const bone = this.findBone(root, boneName);
-      if (!bone) return;
       const hb = this.makeHitbox(radius, zone, zombieId);
-      if (offset) hb.position.set(offset[0], offset[1], offset[2]);
+      hb.position.set(
+        centerX + offset[0],
+        centerY + offset[1],
+        centerZ + offset[2]
+      );
       if (limb) hb.userData.limb = limb;
-      bone.add(hb);
+      root.add(hb);
       hitboxMeshes.push(hb);
     };
 
-    // Head & jaw
-    addHitbox('head_014', 0.15 * (config.scale || 1), 'HEAD', [0, 0.1, 0.02]);
-    // Torso chain
-    addHitbox('hip_016', 0.21, 'TORSO');
-    addHitbox('spine01_052', 0.22, 'TORSO', [0, 0.08, 0]);
-    addHitbox('chest_017', 0.24, 'TORSO', [0, 0.05, 0.02]);
-    // Limbs (spheres at each major joint approximate the limb volume); each
-    // carries a limb tag so dismemberment severs the exact limb that was hit
-    addHitbox('upper_arm_L_03', 0.11, 'LIMB', [0, -0.12, 0], 'ARM_L');
-    addHitbox('forearm_L_051', 0.1, 'LIMB', [0, -0.12, 0], 'ARM_L');
-    addHitbox('upper_arm_R_07', 0.11, 'LIMB', [0, -0.12, 0], 'ARM_R');
-    addHitbox('forearm_R_09', 0.1, 'LIMB', [0, -0.12, 0], 'ARM_R');
-    addHitbox('thigh_L_034', 0.14, 'LIMB', [0, -0.16, 0], 'LEG_L');
-    addHitbox('shin_L_035', 0.12, 'LIMB', [0, -0.16, 0], 'LEG_L');
-    addHitbox('thigh_R_038', 0.14, 'LIMB', [0, -0.16, 0], 'LEG_R');
-    addHitbox('shin_R_039', 0.12, 'LIMB', [0, -0.16, 0], 'LEG_R');
+    const scale = config.scale || 1.0;
+    const h = height * (config.scale || 1.0);
+    const w = width * (config.scale || 1.0);
+    const d = depth * (config.scale || 1.0);
+    
+    const headHeight = centerY + h * 0.45;
+    const torsoHeight = centerY + h * 0.1;
+    const hipHeight = centerY - h * 0.2;
+    const shoulderHeight = centerY + h * 0.3;
+    const shoulderW = w * 0.35;
+    const hipW = w * 0.25;
+    const limbRadius = Math.max(w, d) * 0.08;
+
+    // Head hitbox (approximate head position)
+    addHitbox('HEAD', h * 0.15, [0, h * 0.45, d * 0.3]);
+
+    // Torso hitboxes
+    addHitbox('TORSO', h * 0.25, [0, h * 0.2, 0]);           // Chest
+    addHitbox('TORSO', h * 0.2, [0, -h * 0.1, 0]);           // Lower torso
+    addHitbox('TORSO', h * 0.18, [0, -h * 0.35, 0]);         // Hip/pelvis
+
+    // Arm hitboxes (approximate positions)
+    const armRadius = limbRadius;
+    const shoulderY = centerY + h * 0.3;
+    const armZ = d * 0.2;
+    addHitbox('LIMB', armRadius, [-shoulderW, shoulderY, armZ], 'ARM_L');  // Left upper arm
+    addHitbox('LIMB', armRadius * 0.8, [-shoulderW, shoulderY - h*0.25, armZ], 'ARM_L'); // Left forearm
+    addHitbox('LIMB', armRadius, [shoulderW, shoulderY, armZ], 'ARM_R');   // Right upper arm
+    addHitbox('LIMB', armRadius * 0.8, [shoulderW, shoulderY - h*0.25, armZ], 'ARM_R'); // Right forearm
+
+    // Leg hitboxes
+    const legRadius = limbRadius * 1.2;
+    const hipY = centerY - h * 0.2;
+    const legZ = d * 0.15;
+    addHitbox('LIMB', legRadius, [-hipW, hipY, legZ], 'LEG_L');  // Left thigh
+    addHitbox('LIMB', legRadius * 0.8, [-hipW, hipY - h*0.3, legZ], 'LEG_L'); // Left shin
+    addHitbox('LIMB', legRadius, [hipW, hipY, legZ], 'LEG_R');   // Right thigh
+    addHitbox('LIMB', legRadius * 0.8, [hipW, hipY - h*0.3, legZ], 'LEG_R'); // Right shin
 
     // ---- Glowing infected eyes (readable at night, horror silhouette) ----
-    if (rig.headBone) {
-      const eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(config.eyeGlowColor || 0xffaa00).multiplyScalar(2.4) });
-      const eyeGeo = new THREE.SphereGeometry(0.028, 6, 5);
-      const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-      eyeL.position.set(-0.07, 0.13, 0.12);
-      const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
-      eyeR.position.set(0.07, 0.13, 0.12);
-      rig.headBone.add(eyeL, eyeR);
-    }
+    const eyeMat = new THREE.MeshBasicMaterial({ 
+      color: new THREE.Color(config.eyeGlowColor || 0xffaa00).multiplyScalar(2.4) 
+    });
+    const eyeGeo = new THREE.SphereGeometry(0.028, 6, 5);
+    const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeL.position.set(-0.07, centerY + h * 0.4, d * 0.3);
+    const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeR.position.set(0.07, centerY + h * 0.4, d * 0.3);
+    root.add(eyeL, eyeR);
 
     // ---- Colossus pulsing weakpoint on the chest ----
+    let weakpointMesh: THREE.Mesh | undefined;
     if (config.isBoss) {
-      const chest = this.findBone(root, 'chest_017');
-      if (chest) {
-        const wpMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3b1f).multiplyScalar(2.8) });
-        const wp = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), wpMat);
-        wp.position.set(0, 0.12, 0.24);
-        wp.userData.hitZone = 'WEAKPOINT';
-        wp.userData.zombieId = zombieId;
-        wp.userData.isHitbox = true;
-        chest.add(wp);
-        hitboxMeshes.push(wp);
-        rig.weakpointMesh = wp;
-      }
+      const wpMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3b1f).multiplyScalar(2.8) });
+      const wp = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), wpMat);
+      wp.position.set(0, centerY + h * 0.2, d * 0.3);
+      wp.userData.hitZone = 'WEAKPOINT';
+      wp.userData.zombieId = zombieId;
+      wp.userData.isHitbox = true;
+      root.add(wp);
+      hitboxMeshes.push(wp);
     }
 
     return { rig, hitboxMeshes, headMesh: hitboxMeshes[0] };
   }
 
-  /** Crossfade to the animation matching the zombie AI state and tick the mixer. */
+  /** Update animation for static model (procedural animation only) */
   public static updateAnimation(zombie: ZombieInstance, delta: number) {
     const rig = zombie.gltfRig;
     if (!rig) return;
 
     if (zombie.isDead) {
-      // Decapitation: collapse the head bone so the skull vanishes from the mesh
-      if (zombie.isDecapitated && rig.headBone) {
-        rig.headBone.scale.setScalar(0.001);
-      }
-      this.crossfadeTo(rig, 'death', 0.22, false, 0.9);
-      rig.mixer.update(delta);
+      // For static model, just hide the head on death
+      rig.root.traverse((obj) => {
+        if (obj.name && obj.name.toLowerCase().includes('head')) {
+          obj.scale.setScalar(0.001);
+        }
+      });
       return;
     }
 
-    let clipName = 'idle01';
-    let timeScale = 1.0;
-    let loop = true;
-
-    const isCrawler = zombie.type === 'crawler';
-    const isFast = zombie.type === 'runner' || zombie.type === 'stalker' || zombie.isFrenzied;
-
-    switch (zombie.state) {
-      case 'IDLE':
-        clipName = zombie.type === 'spitter' || zombie.type === 'bloater' ? 'eat' : 'idle01';
-        timeScale = 0.9;
-        break;
-      case 'WANDER':
-        clipName = 'walk01';
-        timeScale = 0.75;
-        break;
-      case 'ALERT':
-        clipName = 'caution';
-        timeScale = 1.0;
-        break;
-      case 'STAGGER':
-        clipName = 'damage';
-        timeScale = 1.4;
-        loop = false;
-        break;
-      case 'ATTACK':
-        clipName = isCrawler ? 'on_all_four_eat' : 'attack01';
-        timeScale = 1.25;
-        break;
-      case 'CHASE':
-      default:
-        if (isCrawler) {
-          clipName = 'on_all_four_A';
-          timeScale = 1.3;
-        } else if (isFast) {
-          clipName = 'run';
-          timeScale = THREE.MathUtils.clamp(zombie.speed / 2.4, 0.85, 1.5);
-        } else {
-          clipName = 'walk02';
-          timeScale = THREE.MathUtils.clamp(zombie.speed / 1.4, 0.8, 1.3);
+    // Procedural idle animation for static model - subtle breathing/swaying
+    const time = performance.now() * 0.001;
+    const idleAmplitude = 0.02;
+    const idleSpeed = 1.5;
+    
+    if (rig.root) {
+      // Subtle body sway
+      rig.root.rotation.y = Math.sin(rig.root.rotation.y + delta * idleSpeed) * idleAmplitude;
+      rig.root.position.y = Math.sin(performance.now() * 0.001 * 1.2) * 0.01;
+      
+      // Subtle head bob
+      rig.root.traverse((obj) => {
+        if (obj.name && obj.name.toLowerCase().includes('head')) {
+          obj.rotation.y = Math.sin(performance.now() * 0.001 * 2) * 0.05;
+          obj.position.y = Math.sin(performance.now() * 0.001 * 2.5) * 0.01;
         }
-        break;
+      });
     }
 
-    // Bullet-hit slowdown drags the animation down too
-    if (zombie.slowTimer > 0) {
-      timeScale *= Math.max(0.35, zombie.slowMultiplier);
-    }
-
-    this.crossfadeTo(rig, clipName, zombie.state === 'STAGGER' ? 0.08 : 0.2, loop, timeScale);
-    rig.mixer.update(delta);
-
-    // Pulsing boss weakpoint
+    // Pulsing boss weakpoint (if exists)
     if (rig.weakpointMesh) {
       const pulse = 1.0 + Math.sin(performance.now() * 0.006) * 0.22;
       rig.weakpointMesh.scale.setScalar(pulse);
