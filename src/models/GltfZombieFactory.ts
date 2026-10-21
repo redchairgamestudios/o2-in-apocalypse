@@ -15,7 +15,7 @@ import type { ZombieInstance } from './ZombieModel';
  * by julianmurcia245 (https://sketchfab.com/julianmurcia245), CC-BY-4.0.
  */
 
-const MODEL_URL = '/assets/models/zombie/zombie_dog.glb';
+const MODEL_URL = '/assets/models/zombie/scene.gltf';
 const TARGET_HEIGHT = 1.82; // meters at config.scale === 1.0
 
 export interface GltfRig {
